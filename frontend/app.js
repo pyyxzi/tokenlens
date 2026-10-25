@@ -2335,7 +2335,15 @@
           ${s.included ? `<div class="src-kv"><span>${en ? 'Cost basis' : '成本口径'}</span><b>${s.estimated ? (en ? 'Estimated' : '公开价估算') : (en ? 'Reported' : '来源实报')}</b></div>` : ''}
           ${sideHtml}
         </div>
-        ${s.error ? `<div class="src-error"><i class="ico i-radar"></i><span>${esc(s.error)}</span></div>` : ''}
+        ${s.error ? `<div class="src-error"><i class="ico i-radar"></i>
+          <div class="src-error-body">
+            <span>${esc(s.error)}</span>
+            <em>${s.last_scan_at ? (en ? `Previous snapshot kept (${dtime(s.last_scan_at)})` : `已保留上次快照（${dtime(s.last_scan_at)}）`) : (en ? 'No previous snapshot yet' : '尚无历史快照')}</em>
+            <div class="src-error-actions">
+              <button class="btn btn-ghost btn-xs" type="button" data-source-reveal="${esc(s.id)}"><i class="ico i-list"></i>${en ? 'Open data folder' : '打开数据目录'}</button>
+              <button class="btn btn-ghost btn-xs" type="button" data-source-diag="1"><i class="ico i-info"></i>${en ? 'Export diagnostics' : '导出诊断'}</button>
+            </div>
+          </div></div>` : ''}
         ${srcNote(s) ? `<div class="src-note">${esc(srcNote(s))}</div>` : ''}
         <div class="src-actions"><button class="btn btn-ghost btn-xs src-rescan" type="button" data-source-scan="${esc(s.id)}" ${S.scanRunning ? 'disabled' : ''}><i class="ico i-refresh"></i>${en ? 'Rescan source' : '重扫此来源'}</button></div>`;
       cards.push(card);
@@ -2672,6 +2680,69 @@
       <div class="cs-row"><span>未缓存输入</span><b>${fmt(s.input)}</b></div>
       <div class="cs-row"><span>估算节省</span><b style="color:var(--ok)">${cacheSave ? cacheSave.value : '—'}</b></div>
       <div class="cs-row"><span>整体记录费用</span><b>${money(s.cost, rate)}</b></div>`;
+  }
+
+  /* 周报卡片：本周用量 + 本周期预算进度。纯本地计算、零 AI、零配置；
+     没设预算时只显示本周摘要，顺带引导去设置预算。 */
+  const weeklyDigestCache = { at: 0, html: '' };
+  const compactTokens = (n) => {
+    n = Number(n) || 0;
+    const neg = n < 0; n = Math.abs(n);
+    let u = 0;
+    while (n >= 1000 && u < 4) { n /= 1000; u += 1; }
+    const s = n >= 100 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2).replace(/\.?0+$/, '');
+    return (neg ? '-' : '') + s + ['', 'K', 'M', 'B', 'T'][u];
+  };
+  async function renderWeeklyDigest() {
+    const host = $('#weeklyDigest');
+    if (!host) return;
+    if (weeklyDigestCache.html && Date.now() - weeklyDigestCache.at < 600000) {
+      host.innerHTML = weeklyDigestCache.html; host.hidden = false; return;
+    }
+    let week = null, budget = null;
+    try { [week, budget] = await Promise.all([api('/api/summary?range=7d'), api('/api/budget')]); }
+    catch (_) { host.hidden = true; return; }
+    const en = isEn();
+    const s = (week && week.summary) || {};
+    const b = (budget && budget.budget) || {};
+    const hasBudget = b && b.metric && b.metric !== 'none' && b.limit > 0;
+    const pct = hasBudget ? Math.min(1, b.ratio) : 0;
+    const col = !hasBudget ? ROLE.ok() : (b.over ? ROLE.danger() : (b.ratio >= b.warn_ratio ? ROLE.warn() : ROLE.ok()));
+    const periodLabel = b.period === 'week' ? (en ? 'This week' : '本周') : (en ? 'This month' : '本月');
+    const amount = hasBudget
+      ? (b.metric === 'cost'
+          ? `$${Number(b.used).toFixed(2)} / $${Number(b.limit).toFixed(2)}`
+          : `${compactTokens(b.used)} / ${compactTokens(b.limit)} tokens`)
+      : '';
+    const budgetHtml = hasBudget
+      ? `<div class="wd-budget">
+          <div class="wd-budget-top"><span>${periodLabel}${en ? ' · budget' : ' · 预算'} · ${amount}</span>
+            <b style="color:${col}">${(b.ratio * 100).toFixed(0)}%</b></div>
+          <div class="wd-bar"><i style="width:${(pct * 100).toFixed(1)}%;background:${col}"></i></div>
+          ${b.forecast && b.limit
+            ? `<small>${en ? `Projected end of period: ${b.metric === 'cost' ? '$' + Number(b.forecast).toFixed(2) : compactTokens(b.forecast) + ' tokens'}` : `按当前节奏预计期末 ${b.metric === 'cost' ? '$' + Number(b.forecast).toFixed(2) : compactTokens(b.forecast) + ' tokens'}`}</small>`
+            : ''}
+        </div>`
+      : `<a href="#" class="wd-hint" data-view-goto="settings">${en ? 'Set a budget to track your pace →' : '设置预算，掌握用量节奏 →'}</a>`;
+    host.innerHTML = `
+      <div class="card-head">
+        <div><h3>${en ? 'Weekly digest' : '本周速览'}</h3>
+          <p>${en ? 'Local summary, no AI needed' : '本地计算，无需 AI'}</p></div>
+      </div>
+      <div class="wd-body">
+        <div class="wd-kv"><span>${en ? 'Tokens (7d)' : '本周 Tokens'}</span><b data-countup>${fmtExact(s.total || 0)}</b></div>
+        <div class="wd-kv"><span>${en ? 'Cost (7d)' : '本周费用'}</span><b data-countup>${money(s.cost || 0)}</b></div>
+        <div class="wd-kv"><span>${en ? 'Active days' : '活跃天数'}</span><b>${s.days || '—'}</b></div>
+        <div class="wd-kv"><span>${en ? 'Calls' : '调用次数'}</span><b data-countup>${fmtExact(s.requests || 0)}</b></div>
+        ${budgetHtml}
+      </div>`;
+    host.hidden = false;
+    animateNumericElements(host);
+    host.querySelectorAll('[data-view-goto]').forEach((a) => a.onclick = (e) => {
+      e.preventDefault(); switchView(a.getAttribute('data-view-goto'));
+    });
+    weeklyDigestCache.html = host.innerHTML;
+    weeklyDigestCache.at = Date.now();
   }
 
   function renderBudget(b, rate) {
@@ -4668,7 +4739,7 @@
   function renderView(v, chartsOnly) {
     if (!S.data) return;
     const started = performance.now();
-    if (v === 'overview') { chartsOnly ? renderCharts() : renderOverview(); }
+    if (v === 'overview') { chartsOnly ? renderCharts() : renderOverview(); renderWeeklyDigest(); }
     else if (v === 'insights') renderInsights();
     else if (v === 'tools') renderTools();
     else if (v === 'models') {
@@ -5517,10 +5588,32 @@
     if($('#displayCurrencySelect'))$('#displayCurrencySelect').onchange=event=>applyDisplayCurrency(event.target.value);
     $('#rescanBtn').onclick = () => startScan(false);
     const srcGrid = $('#srcGrid');
-    if (srcGrid) srcGrid.addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-source-scan]');
-      if (!btn || btn.disabled || S.scanRunning) return;
-      startScan(false, btn.getAttribute('data-source-scan'));
+    if (srcGrid) srcGrid.addEventListener('click', async (e) => {
+      const scanBtn = e.target.closest('[data-source-scan]');
+      if (scanBtn && !scanBtn.disabled && !S.scanRunning) {
+        startScan(false, scanBtn.getAttribute('data-source-scan'));
+        return;
+      }
+      const revealBtn = e.target.closest('[data-source-reveal]');
+      if (revealBtn) {
+        // 服务端只打开自家适配器探测到的目录，路径不经过页面。
+        try { await api('/api/sources/reveal', { method: 'POST', body: { id: revealBtn.getAttribute('data-source-reveal') } }); }
+        catch (error) { toast(error.message || String(error), 'err'); }
+        return;
+      }
+      const diagBtn = e.target.closest('[data-source-diag]');
+      if (diagBtn) {
+        if (window.TLNative) {
+          try { await window.TLNative.download('/api/diagnostics'); toast(isEn() ? 'Diagnostics saved' : '诊断已保存', 'ok'); }
+          catch (error) { toast(error.message || String(error), 'err'); }
+        } else {
+          try {
+            const res = await fetch('/api/diagnostics');
+            await navigator.clipboard.writeText(await res.text());
+            toast(isEn() ? 'Diagnostics copied' : '诊断已复制', 'ok');
+          } catch (error) { toast(String(error), 'err'); }
+        }
+      }
     });
     $('#cancelScanBtn').onclick = async () => {
       const btn = $('#cancelScanBtn'); if (btn) btn.disabled = true;

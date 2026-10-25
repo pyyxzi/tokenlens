@@ -56,6 +56,78 @@ fn reveal(app: &tauri::AppHandle, view: Option<&str>) {
 
 static UPDATE_CHECKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+fn fmt_tokens(mut n: f64) -> String {
+    for unit in ["", "K", "M", "B"] {
+        if n.abs() < 1000.0 || unit == "B" {
+            let s = if n >= 100.0 { format!("{n:.0}") } else if n >= 10.0 { format!("{n:.1}") } else { format!("{n:.2}") };
+            let s = s.trim_end_matches('0').trim_end_matches('.');
+            return format!("{s}{unit}");
+        }
+        n /= 1000.0;
+    }
+    String::new()
+}
+
+// Tray companion: today's totals in the hover tooltip and one native
+// notification per budget period once the warn threshold is crossed.
+// Works with the window hidden; failures are skipped until the next tick.
+async fn tray_monitor(app: tauri::AppHandle) {
+    use tauri_plugin_notification::NotificationExt;
+    let mut first = true;
+    let mut notified: Option<(String, u8)> = None;
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(if first { 20 } else { 600 })).await;
+        first = false;
+        let service = app.state::<Service>();
+        if let Ok(resp) = service.request("/api/summary?range=today", "GET", None).await {
+            if let Ok(text) = resp.text().await {
+                if let Some(summary) = serde_json::from_str::<serde_json::Value>(&text).ok()
+                        .and_then(|v| v.get("summary").cloned()) {
+                    let total = summary.get("total").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                    let cost = summary.get("cost").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                    if let Some(tray) = app.tray_by_id("main-tray") {
+                        let _ = tray.set_tooltip(Some(format!(
+                            "TokenLens · 今日 {} tokens · ${:.2}", fmt_tokens(total), cost)));
+                    }
+                }
+            }
+        }
+        if let Ok(resp) = service.request("/api/budget", "GET", None).await {
+            if let Ok(text) = resp.text().await {
+                let budget = serde_json::from_str::<serde_json::Value>(&text).ok()
+                    .and_then(|v| v.get("budget").cloned());
+                if let Some(b) = budget {
+                    let limit = b.get("limit").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                    let ratio = b.get("ratio").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                    let warn = b.get("warn_ratio").and_then(|x| x.as_f64()).unwrap_or(0.8);
+                    let over = b.get("over").and_then(|x| x.as_bool()).unwrap_or(false);
+                    let metric = b.get("metric").and_then(|x| x.as_str()).unwrap_or("tokens").to_string();
+                    let used = b.get("used").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                    let start = b.get("start").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let period = if b.get("period").and_then(|x| x.as_str()) == Some("week") { "本周" } else { "本月" };
+                    if limit > 0.0 && (over || ratio >= warn) {
+                        let level: u8 = if over { 2 } else { 1 };
+                        if notified.as_ref() != Some(&(start.clone(), level)) {
+                            let amount = if metric == "cost" {
+                                format!("${:.2} / ${:.2}", used, limit)
+                            } else {
+                                format!("{} / {} tokens", fmt_tokens(used), fmt_tokens(limit))
+                            };
+                            let (title, body) = if over {
+                                ("TokenLens 预算已超支", format!("{period}已用 {amount}，超过预算上限。"))
+                            } else {
+                                ("TokenLens 预算提醒", format!("{period}已用 {amount}（{:.0}%），接近预算上限。", ratio * 100.0))
+                            };
+                            let _ = app.notification().builder().title(title).body(body).show();
+                            notified = Some((start, level));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn notice(app: &tauri::AppHandle, message: String) {
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -73,6 +145,21 @@ async fn confirm(app: &tauri::AppHandle, message: String) -> bool {
     }).await.unwrap_or(false)
 }
 
+// Version line plus a short changelog excerpt from the signed manifest so
+// users can decide without opening the browser.
+fn update_summary(update: &tauri_plugin_updater::Update) -> String {
+    let mut message = format!("发现新版本 {}（当前 {}），是否立即下载并安装？",
+                              update.version, update.current_version);
+    if let Some(notes) = update.body.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        let mut brief: String = notes.chars().take(160).collect();
+        if notes.chars().count() > 160 { brief.push('…'); }
+        message.push_str("\n\n");
+        message.push_str(&brief.replace('\n', " "));
+    }
+    message.push_str("\n\n完整说明：github.com/pyyxzi/tokenlens/releases");
+    message
+}
+
 // One update flow at a time; failures only surface when the user asked for them.
 async fn run_update_check(app: tauri::AppHandle, manual: bool) {
     use std::sync::atomic::Ordering;
@@ -86,8 +173,7 @@ async fn run_update_check(app: tauri::AppHandle, manual: bool) {
             if manual { notice(&app, "当前已是最新版本。".into()); }
             return Ok(());
         };
-        if !confirm(&app, format!("发现新版本 {}（当前 {}），是否立即下载并安装？",
-                update.version, update.current_version)).await {
+        if !confirm(&app, update_summary(&update)).await {
             return Ok(());
         }
         // Windows: verifies the minisign signature, runs the installer and
@@ -107,6 +193,7 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| reveal(app, None)))
         .invoke_handler(tauri::generate_handler![service::service_request, service::service_cancel, service::service_ack,
             service::service_download, service::save_document, open_external])
@@ -152,7 +239,8 @@ fn main() {
             let update = MenuItem::with_id(app, "update", "检查更新…", true, None::<&str>)?;
             let exit = MenuItem::with_id(app, "exit", "退出 TokenLens", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &scan, &cancel, &settings, &update, &exit])?;
-            TrayIconBuilder::new().icon(app.default_window_icon().expect("bundled icon").clone())
+            TrayIconBuilder::with_id("main-tray")
+                .icon(app.default_window_icon().expect("bundled icon").clone())
                 .tooltip("TokenLens").menu(&menu).show_menu_on_left_click(false)
                 .on_tray_icon_event(|tray, event| {
                     if matches!(event, TrayIconEvent::Click {button:MouseButton::Left,button_state:MouseButtonState::Up,..}) {
@@ -178,6 +266,9 @@ fn main() {
                     _ => {}
                 }).build(app)?;
             Service::supervise(app.handle().clone());
+            // Tray tooltip + budget notifications, with the window hidden too.
+            let monitor = app.handle().clone();
+            tauri::async_runtime::spawn(async move { tray_monitor(monitor).await; });
             // Silent startup check; a found update still asks before installing.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

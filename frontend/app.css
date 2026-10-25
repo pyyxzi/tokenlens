@@ -1854,3 +1854,26 @@ html[data-font="mono"] body{letter-spacing:0}
   .iq-stream-pre{font-size:11.5px;line-height:1.75;max-height:240px;}
   .iq-question>.iq-answer-wrap{padding:13px;}
 }
+
+/* ---- 本周速览卡片（总览页顶部，本地计算） ---- */
+.weekly-digest{padding:14px 18px}
+.weekly-digest .wd-body{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 18px;align-items:center}
+.weekly-digest .wd-kv{display:flex;flex-direction:column;gap:3px}
+.weekly-digest .wd-kv span{font-size:11px;color:var(--muted)}
+.weekly-digest .wd-kv b{font-size:17px;font-weight:650;font-variant-numeric:tabular-nums}
+.weekly-digest .wd-budget{display:flex;flex-direction:column;gap:5px;min-width:200px}
+.weekly-digest .wd-budget-top{display:flex;justify-content:space-between;align-items:baseline;font-size:11.5px;color:var(--text-2)}
+.weekly-digest .wd-budget-top b{font-size:14px;font-variant-numeric:tabular-nums}
+.weekly-digest .wd-bar{height:6px;border-radius:3px;background:color-mix(in srgb,var(--fg) 8%,transparent);overflow:hidden}
+.weekly-digest .wd-bar i{display:block;height:100%;border-radius:3px;transition:width .5s ease}
+.weekly-digest .wd-budget small{font-size:10.5px;color:var(--muted)}
+.weekly-digest .wd-hint{font-size:11.5px;color:var(--accent);text-decoration:none}
+.weekly-digest .wd-hint:hover{text-decoration:underline}
+
+/* ---- 来源错误下钻：原因 + 保留快照时间 + 就地操作 ---- */
+.src-error{display:flex;gap:8px;align-items:flex-start;margin-top:10px;padding:9px 10px;border-radius:8px;
+  background:color-mix(in srgb,#f43f5e 8%,transparent);font-size:11.5px;color:var(--text-2)}
+.src-error-body{display:flex;flex-direction:column;gap:6px;min-width:0;flex:1}
+.src-error-body>span{overflow-wrap:anywhere}
+.src-error-body em{font-style:normal;font-size:10.5px;color:var(--muted)}
+.src-error-actions{display:flex;gap:6px;flex-wrap:wrap}

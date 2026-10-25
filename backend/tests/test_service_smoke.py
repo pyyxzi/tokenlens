@@ -93,6 +93,15 @@ class ServiceSmokeTests(unittest.TestCase):
         self.assertEqual(body.get("app"), APP_NAME)
         self.assertEqual(body.get("version"), APP_VERSION)
 
+    def test_budget_endpoint(self):
+        # The tray monitor polls this; it must answer without filters.
+        status, body = self.request("/api/budget", token=self.token)
+        self.assertEqual(status, 200)
+        budget = body.get("budget") or {}
+        self.assertIn("ratio", budget)
+        self.assertIn("warn_ratio", budget)
+        self.assertIn("period", budget)
+
     def test_missing_secret_rejected(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.request("/api/ping")
