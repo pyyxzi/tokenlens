@@ -94,7 +94,8 @@ async fn run_update_check(app: tauri::AppHandle, manual: bool) {
         // exits this process; request_restart then relaunches the new build.
         update.download_and_install(|_, _| (), || ()).await
             .map_err(|e| format!("下载或安装更新失败：{e}"))?;
-        app.request_restart()
+        app.request_restart();
+        Ok(())
     }.await;
     UPDATE_CHECKING.store(false, Ordering::SeqCst);
     if let Err(message) = outcome {
