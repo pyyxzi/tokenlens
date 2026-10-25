@@ -97,7 +97,6 @@ python -m unittest discover -s backend/tests -v
 
 ## 文档
 
-- [项目结构](项目结构.md) — 源码阅读地图
 - [数据源记账参考](backend/tokenlens/SOURCES.md) — 每种支持的日志格式与上游链接
 - [验证记录](VALIDATION.md) — 功能、健壮性与性能测试结果
 - [新增数据源](docs/adding-a-source.md) — 如何编写一个新适配器
@@ -105,6 +104,8 @@ python -m unittest discover -s backend/tests -v
 ## 参与贡献
 
 欢迎 Issue 和 PR！新增数据源适配器是最有价值的贡献——见[适配器指南](docs/adding-a-source.md)和 [CONTRIBUTING.md](CONTRIBUTING.md)。适合上手的任务标注了 `good first issue`。
+
+<!-- 搜索关键词 / Search keywords: token 统计 · token计数 · 用量统计 · AI 用量 · AI 费用统计 · 大模型 token 统计 · token 消耗 · 模型费用 · 本地统计 · token statistics · token counter · token usage tracker · AI cost calculator · LLM spend tracker -->
 
 ## 许可
 

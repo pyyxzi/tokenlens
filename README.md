@@ -95,7 +95,6 @@ python -m unittest discover -s backend/tests -v
 
 ## Documentation
 
-- [项目结构 / Project structure](项目结构.md) — reading map for the codebase
 - [Data-source accounting reference](backend/tokenlens/SOURCES.md) — every supported log format, with upstream links
 - [Validation record](VALIDATION.md) — functional, robustness and performance test results
 - [Adding a data source](docs/adding-a-source.md) — how to write a new adapter
@@ -103,6 +102,8 @@ python -m unittest discover -s backend/tests -v
 ## Contributing
 
 Issues and pull requests are welcome! New data-source adapters are the single most valuable contribution — see the [adapter guide](docs/adding-a-source.md) and [CONTRIBUTING.md](CONTRIBUTING.md) to start. Good first issues are labeled `good first issue`.
+
+<!-- 搜索关键词 / Search keywords: token statistics · token counter · token usage tracker · AI usage analytics · AI cost calculator · LLM spend tracker · Claude Code usage · Codex CLI usage · Gemini CLI usage · Cursor usage · token 统计 · token计数 · 用量统计 · AI 用量 · AI 费用统计 · 大模型 token 统计 · token 消耗 · 模型费用 · 本地统计 -->
 
 ## License
 
