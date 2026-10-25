@@ -46,7 +46,7 @@ _LOG = logging.getLogger("tokenlens.adapters")
 _PARSE_CONTEXT = threading.local()
 # Semantic changes must invalidate unchanged source files on the next scan.
 # The previous snapshot remains available until a replacement succeeds.
-PARSER_VERSION = "10-codex-owned-response-ledger"
+PARSER_VERSION = "11-mirror-and-crossfile-dedup"
 
 
 def stable_event_id(tool: str, source: str, scope: str = "", explicit: str = "", payload=None) -> str:
@@ -1015,6 +1015,9 @@ class DeepSeekHarnessAdapter(Adapter):
                     except OSError:
                         pass
         self.enumeration_complete = len(out) <= 4000
+        # 供 parse() 做内容级比对：投影文件名与 session 目录名对不上时，
+        # 文件名快路径失效，但投影 JSON 内部的会话 ID 仍然可靠。
+        self._event_sessions = event_sessions
         return out[:4000]
 
     def _parse_event_stream(self, path):
@@ -1170,6 +1173,11 @@ class DeepSeekHarnessAdapter(Adapter):
             session = session[len("session-"):]
         if session.endswith(".json"):
             session = session[:-len(".json")]
+        if _zstandard is not None and ("session-" + session) in getattr(self, "_event_sessions", ()):
+            # 该会话的事件流（逐条账本）会被解析；这份累计投影是镜像。
+            # 文件名快路径只覆盖「投影文件名 == session 目录名」的情况，
+            # 这里按投影内容里的会话 ID 兜底，命名不一致也不双计。
+            return
 
         yield UsageRecord(
             tool=self.id, ts=ts, model=model,
@@ -1683,26 +1691,6 @@ class KimiAdapter(Adapter):
             return "turn"
         return ""
 
-    @staticmethod
-    def _looks_cumulative(recs):
-        """一批无作用域标注的记录是否其实是「会话级累计总量」。
-
-        轮次用量是波动的，累计总量则**逐条单调不减**。所以只在「≥3 条、
-        每条都不小于同会话前一条、且末条明显大于首条」时才判定为累计，
-        避免把正常的轮次序列误判（那样会丢掉大量真实用量）。
-        """
-        by_session = {}
-        for r in recs:
-            by_session.setdefault(r.session, []).append(r.total)
-        for seq in by_session.values():
-            if len(seq) < 3:
-                continue
-            if any(seq[i] < seq[i - 1] for i in range(1, len(seq))):
-                continue
-            if seq[-1] >= (seq[0] or 1) * 2 and seq[-1] > seq[0]:
-                return True
-        return False
-
     @classmethod
     def _net_input(cls, u, inp, out, cr):
         """通用字段名（input / inputTokens…）的口径不定，这里按总量判别。
@@ -1792,23 +1780,45 @@ class KimiAdapter(Adapter):
             )
             {"turn": turns, "session": session_scoped}.get(scope, unknown).append(rec)
 
-        # 无作用域标注的记录要再判一次：像累计总量才按会话取末值，
-        # 否则它们就是普通轮次记录（不能合并，否则丢掉绝大部分用量）。
-        if unknown and (turns or session_scoped or not self._looks_cumulative(unknown)):
-            turns.extend(unknown)
-        else:
-            session_scoped.extend(unknown)
+        # 无作用域标注的记录按会话分别判别：单调不减且翻倍的序列是
+        # 累计快照。同会话已有逐轮明细时，累计快照只是镜像——把它当
+        # 轮次累加会成倍虚增（Codex 1.1.1 修过同类问题）；镜像必须丢弃。
+        if unknown:
+            turns_by_session = {}
+            for r in turns:
+                turns_by_session.setdefault(r.session, []).append(r)
+            by_session = {}
+            for r in unknown:
+                by_session.setdefault(r.session, []).append(r)
+            for sid, recs in by_session.items():
+                seq = [r.total for r in recs]
+                cumulative = (len(seq) >= 3
+                              and all(seq[i] >= seq[i - 1] for i in range(1, len(seq)))
+                              and seq[-1] >= (seq[0] or 1) * 2 and seq[-1] > seq[0])
+                if not cumulative:
+                    turns.extend(recs)
+                    continue
+                labeled = turns_by_session.get(sid)
+                if labeled is None:
+                    # 本文件没有该会话的逐轮明细可对照：维持会话级语义取末值
+                    session_scoped.extend(recs)
+                elif seq[-1] >= 0.9 * sum(r.total for r in labeled):
+                    continue  # 覆盖了轮次总量的单调累计 = 镜像，丢弃
+                else:
+                    turns.extend(recs)
 
-        # 有轮次记录就只信轮次（会话级是累计总量，一起加会成倍虚增）
-        if turns:
-            return iter(turns)
-        # 只有会话级记录时，按会话取最大值：累计值单调递增，末值即总量
+        # 有轮次记录的会话只信轮次（会话级累计是镜像）；没有轮次明细的
+        # 会话保留会话级末值，且按模型分别取——多模型会话各有各的累计。
+        turn_sessions = {r.session for r in turns}
         best = {}
         for r in session_scoped:
-            cur = best.get(r.session)
+            if r.session in turn_sessions:
+                continue
+            key = (r.session, r.model)
+            cur = best.get(key)
             if cur is None or r.total >= cur.total:
-                best[r.session] = r
-        return iter(best.values())
+                best[key] = r
+        return iter(turns + list(best.values()))
 
     def probe(self):
         roots = self._roots()
@@ -2623,6 +2633,12 @@ class CherryStudioAdapter(Adapter):
             yield UsageRecord(
                 tool=self.id, ts=anchor_ts, model="cherry-studio", project="", session="",
                 input=inp, output=out, cost=estimate_cost("", inp, out), src=path,
+                # LevelDB 压实期间同一份 usage 会同时留在 .log 和 .ldb 里；
+                # 按内容三元组建身份，让插入层把跨文件副本去重掉。
+                # 代价：两次完全相同数值的真实调用也会被合并（近似口径下
+                # 少计优于多计）。
+                event_id="cherry-studio:" + hashlib.sha256(
+                    ("%d/%d/%d" % (inp, out, total)).encode("ascii")).hexdigest()[:40],
                 extra={"heuristic": True, "precision": "approx"},
             )
 
@@ -2669,18 +2685,25 @@ class LMStudioAdapter(Adapter):
         hits = []
 
         def walk(node, depth=0):
+            """返回本子树已入账的 (input, output) 合计。
+
+            父节点的累计 usage 与子节点逐条之和完全相等时，父节点只是
+            聚合包装——两条都入账会把同一批 token 算两遍。
+            """
             if depth > 6 or len(hits) > 200:
-                return
+                return (0, 0)
+            children = (node.values() if isinstance(node, dict)
+                        else node if isinstance(node, list) else ())
+            child_sums = [walk(v, depth + 1) for v in children]
+            child_inp = sum(t[0] for t in child_sums)
+            child_out = sum(t[1] for t in child_sums)
             if isinstance(node, dict):
                 inp = _i(dig(node, "promptTokens", "prompt_tokens", "inputTokens", default=0))
                 out = _i(dig(node, "completionTokens", "completion_tokens", "outputTokens", default=0))
-                if inp + out > 0:
+                if inp + out > 0 and (inp, out) != (child_inp, child_out):
                     hits.append((inp, out, node))
-                for v in node.values():
-                    walk(v, depth + 1)
-            elif isinstance(node, list):
-                for v in node:
-                    walk(v, depth + 1)
+                    return (child_inp + inp, child_out + out)
+            return (child_inp, child_out)
 
         walk(o)
         fallback = int(os.path.getmtime(path))
@@ -2833,7 +2856,12 @@ class AiderAdapter(Adapter):
         for line in text.splitlines():
             m = re.match(r"^#{2,4}\s+(.+)$", line.strip())
             if m and re.search(r"gpt|claude|gemini|deepseek|qwen|glm|o[13]|llama|mistral", m.group(1), re.I):
-                cur_model = m.group(1).strip()
+                # 标题行常带日期时间前缀（"#### 2024-05-01 10:00 gpt-4o"）；
+                # 整行当模型名会让估价永远匹配不到，剥掉前缀只留模型部分。
+                name = re.sub(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}([\sT]\d{1,2}:\d{2}(:\d{2})?)?\s*",
+                              "", m.group(1)).strip()
+                if name:
+                    cur_model = name
             mm = self._LINE.search(line)
             if mm:
                 inp = int(mm.group(1).replace(",", ""))
@@ -2985,7 +3013,12 @@ class ApiLogAdapter(Adapter):
             reasoning = included_reasoning or _i(dig(usage, "reasoning_tokens", "reasoningTokens", default=0))
             # OpenAI Chat/Responses details are a subset of the output total.
             # Store the visible portion separately so total/cost add reasoning
-            # exactly once. Flat reasoning counters are explicitly separate.
+            # exactly once. Flat reasoning counters are explicitly separate,
+            # except in OpenRouter-style logs (nested usage.cost object or a
+            # provider field) where completion_tokens already includes them.
+            openrouter = isinstance(usage.get("cost"), dict) or "provider" in obj
+            if not included_reasoning and reasoning and openrouter:
+                included_reasoning = reasoning
             if included_reasoning > out:
                 raise ValueError("reasoning detail exceeds reported output tokens")
             out -= included_reasoning
@@ -3532,7 +3565,10 @@ class CopilotCliAdapter(Adapter):
                 session=session, input=inp, output=out - reasoning, cache_read=cr, cache_write=cw,
                 reasoning=reasoning, requests=count, cost=cost,
                 cost_kind="estimated" if cost else "unknown", cost_source="price-table" if cost else "unpriced",
-                src=path, event_id=stable_event_id(self.id, path, session, str(model)),
+                # 快照身份按（会话, 模型）而不是文件路径：resume 会话会写新的
+                # session-state 目录，同一份累计按路径建档会双计。跨文件首见
+                # 生效，副本被插入层拒绝。
+                src=path, event_id=stable_event_id(self.id, "", session, str(model)),
                 extra={"quality": "aggregate", "billing_unit": "premium-request", "request_id": str(model)})
 
 
