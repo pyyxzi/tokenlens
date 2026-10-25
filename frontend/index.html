@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TokenLens</title>
+<link rel="icon" type="image/png" sizes="32x32" href="./icon32.png?v=1.1.1">
+<link rel="icon" type="image/png" sizes="256x256" href="./icon256.png?v=1.1.1">
+<link rel="apple-touch-icon" href="./icon256.png?v=1.1.1">
+<link rel="stylesheet" href="./app.css?v=1.1.1">
+<link rel="stylesheet" href="./manage.css?v=1.1.1">
+<link rel="stylesheet" href="./responsive.css?v=1.1.1">
+<link rel="stylesheet" href="./connection.css?v=1.1.1">
+<link rel="stylesheet" href="./assistant.css?v=1.1.1">
+<link rel="stylesheet" href="./ai-settings.css?v=1.1.1">
+<link rel="stylesheet" href="./context.css?v=1.1.1">
+<link rel="stylesheet" href="./sources.css?v=1.1.1">
+<link rel="stylesheet" href="./workbench.css?v=1.1.1">
+</head>
+<body>
+<div class="aurora">
+  <span class="scrim"></span>
+</div>
+<div class="app" id="app">
+  <aside class="sidebar" aria-label="主导航">
+    <nav class="nav" id="nav" aria-label="页面">
+      <a data-view="overview" class="active"><i class="ico i-grid"></i><span>总览</span></a>
+      <a data-view="insights"><i class="ico i-spark"></i><span>洞察</span></a>
+      <a data-view="tools"><i class="ico i-cube"></i><span>按工具</span></a>
+      <a data-view="models"><i class="ico i-chip"></i><span>按模型</span></a>
+      <a data-view="projects"><i class="ico i-folder"></i><span>按项目</span></a>
+      <a data-view="sessions"><i class="ico i-chat"></i><span>按会话</span></a>
+      <a data-view="sources"><i class="ico i-radar"></i><span>数据源</span></a>
+      <a data-view="records"><i class="ico i-list"></i><span>明细流水</span></a>
+      <a data-view="manage"><i class="ico i-folder"></i><span>成本管理</span></a>
+      
+      <a data-view="assistant"><i class="ico i-spark"></i><span>AI 助手</span></a>
+      <a data-view="prompt"><i class="ico i-wand"></i><span>提示词优化</span></a>
+      <a data-view="ai-test"><i class="ico i-radar"></i><span>AI 智商检测</span></a>
+      
+      <a data-view="settings"><i class="ico i-gear"></i><span>设置</span></a>
+    </nav>
+    <div class="side-foot">
+      <div class="scan-state" id="scanState">
+        <span class="dot"></span><span id="scanText">就绪</span>
+      </div>
+      <div class="progress-wrap" id="progressWrap"><div class="progress-bar" id="progressBar"></div></div>
+      <button class="btn btn-ghost btn-block" id="rescanBtn"><i class="ico i-refresh"></i>重新扫描</button>
+      <button class="btn btn-ghost btn-block" id="cancelScanBtn" hidden><i class="ico i-close"></i>取消扫描</button>
+      <button class="btn btn-ghost btn-block" id="themeBtn"><i class="ico i-moon"></i><span id="themeLabel">切换亮色</span></button>
+      <button class="btn btn-ghost btn-block" id="aboutBtn"><i class="ico i-info"></i>关于</button>
+      <button class="btn btn-ghost btn-block" id="diagnosticsBtn"><i class="ico i-list"></i>导出诊断</button>
+    </div>
+  </aside>
+  <main class="main">
+    <button class="nav-scrim" id="navScrim" aria-label="关闭导航"></button>
+    <header class="topbar">
+      <button class="btn btn-ghost nav-toggle" id="navToggle" aria-label="打开导航" aria-controls="nav" aria-expanded="false">☰</button>
+      <div class="tb-left">
+        <span class="brand-mark" role="img" aria-label="TokenLens">
+          <img src="./icon256.png?v=1.1.1" alt="" width="38" height="38">
+        </span>
+        <div class="tb-titles">
+          <p id="viewKicker" class="view-kicker"></p>
+          <h2 id="viewTitle">总览</h2>
+          <p id="viewSub">全部编程工具与 AI 助手的 token 消耗</p>
+        </div>
+      </div>
+      <div class="tb-right">
+        <div class="search" id="searchBox">
+          <i class="ico i-search"></i>
+          <input id="searchInput" placeholder="搜索模型 / 项目 / 会话…" autocomplete="off" spellcheck="false">
+          <kbd>/</kbd>
+        </div>
+        <div class="segmented" id="rangeSeg">
+          <button data-range="today">今天</button>
+          <button data-range="7d">7 天</button>
+          <button data-range="30d" class="active">30 天</button>
+          <button data-range="90d">90 天</button>
+          <button data-range="365d">一年</button>
+          <button data-range="all">全部</button>
+          <button data-range="custom" id="rangeCustomBtn" title="自定义时间段"><i class="ico i-clock"></i>自定义</button>
+        </div>
+        <div class="range-pop" id="rangePop" hidden>
+          <div class="range-pop-head">
+            <b>自定义时间段</b>
+            <button class="range-pop-x" id="rangePopClose" aria-label="关闭">×</button>
+          </div>
+          <div class="range-quick" id="rangeQuick">
+            <button data-quick="this-month">本月</button>
+            <button data-quick="last-month">上月</button>
+            <button data-quick="last-7">近 7 天</button>
+            <button data-quick="last-14">近 14 天</button>
+            <button data-quick="last-30">近 30 天</button>
+            <button data-quick="this-year">今年</button>
+          </div>
+          <div class="range-fields">
+            <label class="field"><span>开始日期</span><input class="input sm" type="date" id="rangeStart"></label>
+            <label class="field"><span>结束日期</span><input class="input sm" type="date" id="rangeEnd"></label>
+          </div>
+          <div class="range-pop-foot">
+            <span class="range-hint" id="rangeHint"></span>
+            <button class="btn btn-primary" id="rangeApply">应用</button>
+          </div>
+        </div>
+        <div class="tb-actions">
+        <div class="menu-wrap">
+          <button class="btn btn-ghost" id="exportBtn"><i class="ico i-down"></i>导出<i class="ico i-caret"></i></button>
+          <div class="menu" id="exportMenu">
+            <button data-fmt="md">导出 Markdown 报告（周报可直接粘贴）</button>
+            <button data-fmt="csv">导出 CSV（Excel 可直接打开）</button>
+            <button data-fmt="json">导出 JSON（含汇总与明细）</button>
+            <button data-fmt="clip">复制汇总到剪贴板</button>
+          </div>
+        </div>
+        <div class="fps-meter" id="fpsMeter" role="status" aria-live="off" data-no-translate aria-label="实时帧率">
+          <span class="fps-label">FPS</span><strong id="fpsValue">--</strong><span class="fps-state" id="fpsState">采样中</span>
+        </div>
+        </div>
+      </div>
+    </header>
+    <div class="scroll" id="scroll">
+      <section class="view active" data-view="overview">
+        <div id="overviewStatus" data-no-translate></div>
+        <div class="kpis" id="kpis"></div>
+        <div class="card span-3 intraday-card" id="intradayCard" hidden>
+          <div class="card-head">
+            <div>
+              <h3>今日分时段用量</h3>
+              <p id="intradaySub">按小时统计的 token 消耗</p>
+            </div>
+            <div class="segmented sm" id="intradaySeg">
+              <button data-bucket="60" class="active">按小时</button>
+              <button data-bucket="30">按半小时</button>
+            </div>
+          </div>
+          <div class="chart-box" id="intradayChart"></div>
+          <div class="intraday-stats" id="intradayStats"></div>
+        </div>
+        <div class="grid">
+          <div class="card span-2">
+            <div class="card-head">
+              <div>
+                <h3>用量趋势</h3>
+                <p id="trendSub">按天统计的 token 消耗</p>
+              </div>
+              <div class="segmented sm" id="trendSeg">
+                <button data-metric="total" class="active">总量</button>
+                <button data-metric="io">输入 / 输出</button>
+                <button data-metric="cache">缓存读写</button>
+                <button data-metric="cost">成本</button>
+              </div>
+            </div>
+            <div class="chart-box" id="trendChart"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div><h3>工具占比</h3><p>token 消耗分布</p></div></div>
+            <div class="chart-box center" id="donutChart"></div>
+            <div class="legend" id="donutLegend"></div>
+          </div>
+          <div class="card span-3">
+            <div class="card-head">
+              <div><h3>活跃热力图</h3><p id="heatSub">近一年每日用量强度</p></div>
+              <div class="heat-legend">
+                <span>少</span><i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i><span>多</span>
+              </div>
+            </div>
+            <div class="chart-box heat" id="heatmap"></div>
+          </div>
+          <div class="card span-2">
+            <div class="card-head"><div><h3>工具排行</h3><p>按 token 消耗排序</p></div></div>
+            <div id="toolRank" class="rank"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div><h3>模型排行</h3><p>最常用的模型</p></div></div>
+            <div id="modelRank" class="rank"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div><h3>时段分布</h3><p>一天中的编程高峰</p></div></div>
+            <div class="chart-box" id="hourChart"></div>
+          </div>
+          <div class="card span-2">
+            <div class="card-head"><div><h3>项目排行</h3><p>消耗最多的工程目录</p></div></div>
+            <div id="projectRank" class="rank"></div>
+          </div>
+        </div>
+      </section>
+      <section class="view" data-view="insights">
+        <div class="insight-grid" id="insightCards"></div>
+        <div class="grid">
+          <div class="card span-2">
+            <div class="card-head"><div><h3>周期对比</h3><p id="cmpSub">本期 vs 上一等长周期</p></div></div>
+            <div id="compareBox"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div><h3>预算使用</h3><p id="budgetSub">可在设置中设定</p></div></div>
+            <div class="chart-box center" id="budgetChart"></div>
+            <div id="budgetMeta" class="budget-meta"></div>
+          </div>
+          <div class="card span-2">
+            <div class="card-head"><div><h3>用量高峰</h3><p>消耗最集中的时间段</p></div></div>
+            <div id="peakList" class="rank"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div><h3>缓存效率</h3><p>缓存命中带来的成本节省</p></div></div>
+            <div class="cache-stat" id="cacheStat"></div>
+          </div>
+        </div>
+      </section>
+      <section class="view" data-view="tools">
+        <div class="tools-grid" id="toolsGrid"></div>
+      </section>
+      <section class="view" data-view="models">
+        <div class="card">
+          <div class="card-head"><div><h3>模型用量明细</h3><p>含输入/输出/缓存拆分与记录费用</p></div></div>
+          <div class="table-wrap"><table class="tbl" id="modelTable"></table></div>
+        </div>
+        <div class="card ledger-card">
+          <div class="card-head">
+            <div><h3>现价估算 · 计费明细</h3><p id="ledgerSub">按当前单价 × 用量逐项列出，历史金额与价格版本见成本管理</p></div>
+            <div class="segmented sm" id="ledgerSeg">
+              <button data-cur="usd" class="active">USD</button>
+              <button data-cur="cny">CNY</button>
+            </div>
+          </div>
+          <div class="table-wrap"><table class="tbl tbl-ledger" id="ledgerTable"></table></div>
+          <p class="ledger-note" id="ledgerNote"></p>
+        </div>
+      </section>
+      <section class="view" data-view="projects">
+        <div class="card">
+          <div class="card-head"><div><h3>项目用量明细</h3><p>按工作目录聚合</p></div></div>
+          <div class="table-wrap"><table class="tbl" id="projectTable"></table></div>
+        </div>
+      </section>
+      <section class="view" data-view="manage"><div id="manageRoot" data-no-translate></div></section>
+      <section class="view" data-view="sessions">
+        <div class="card">
+          <div class="card-head"><div><h3>会话排行</h3><p>单次会话消耗最高的记录</p></div></div>
+          <div class="table-wrap"><table class="tbl" id="sessionTable"></table></div>
+        </div>
+      </section>
+      <section class="view" data-view="sources">
+        <div class="src-summary" id="srcSummary"></div>
+        <div class="src-scan-summary" id="srcScanSummary" aria-live="polite"></div>
+        <div class="src-grid" id="srcGrid"></div>
+      </section>
+      <section class="view" data-view="records">
+        <div class="card">
+          <div class="card-head">
+            <div><h3>用量流水</h3><p id="recSub">每一条模型调用记录</p></div>
+            <div class="rec-filter">
+              <select id="recTool" class="input sm"></select>
+              <select id="recOrder" class="input sm">
+                <option value="ts">按时间</option>
+                <option value="total">按用量</option>
+                <option value="cost">按成本</option>
+              </select>
+              <select id="recPresetSelect" class="input sm" aria-label="已保存筛选"><option value="">筛选方案</option></select>
+              <button class="btn btn-ghost btn-xs" id="recSavePreset" type="button"><i class="ico i-plus"></i>保存筛选</button>
+              <button class="btn btn-ghost btn-xs" id="recEditPreset" type="button" disabled>编辑方案</button>
+              <button class="btn btn-ghost btn-xs" id="recColumnsBtn" type="button"><i class="ico i-list"></i>列显示</button>
+              <div class="rec-columns-pop" id="recColumnsPop" hidden>
+                <b>显示列</b>
+                <label><input type="checkbox" data-rec-col="model" checked>模型</label>
+                <label><input type="checkbox" data-rec-col="project" checked>项目</label>
+                <label><input type="checkbox" data-rec-col="input" checked>输入</label>
+                <label><input type="checkbox" data-rec-col="output" checked>输出</label>
+                <label><input type="checkbox" data-rec-col="cache_read" checked>缓存读</label>
+                <label><input type="checkbox" data-rec-col="cache_write" checked>缓存写</label>
+                <label><input type="checkbox" data-rec-col="total" checked>合计</label>
+                <label><input type="checkbox" data-rec-col="cost" checked>成本</label>
+                <label><input type="checkbox" data-rec-col="source" checked>来源</label>
+              </div>
+            </div>
+          </div>
+          <div class="rec-daybar" id="recDaybar">
+            <span class="rec-daylabel"><i class="ico i-clock"></i>按日期精修</span>
+            <label class="rec-day"><span>从</span><input class="input sm" type="date" id="recFrom"></label>
+            <label class="rec-day"><span>到</span><input class="input sm" type="date" id="recTo"></label>
+            <button class="btn btn-ghost btn-xs" id="recDayClear" disabled>清除</button>
+            <span class="rec-hint" id="recDayHint"></span>
+          </div>
+          <div class="pager pager-top" id="pagerTop"></div>
+          <div class="table-wrap"><table class="tbl" id="recordTable"></table></div>
+          <div class="pager" id="pager"></div>
+        </div>
+      </section>
+      <section class="view" data-view="prompt">
+        <div class="pl-studio">
+          <header class="pl-hero">
+            <div>
+              <p class="pl-kicker">PROMPT ENHANCER</p>
+              <h3>提示词优化工作区</h3>
+              <p>根据需求选择清晰润色或专业结构，输出可直接使用的提示词。</p>
+            </div>
+            <div class="pl-connection">
+              <span class="badge b-missing" id="plBadge">未配置</span>
+              <span id="plSub">尚未连接 AI</span>
+              <button class="btn btn-ghost" id="plHistoryBtn"><i class="ico i-clock"></i>历史记录</button>
+              <button class="btn btn-primary pl-run" id="plRunBtn" disabled><i class="ico i-spark"></i>优化提示词</button>
+            </div>
+          </header>
+          <div class="notice" id="plPrivacy" style="display:none">
+            <i class="ico i-shield"></i>
+            <span>API Key 仅保存在本机并由 Windows DPAPI 加密。提交优化时，提示词只会发送到你配置的 AI 服务。</span>
+          </div>
+          <div class="pl-mode-switch" id="plMode" aria-label="提示词优化方式">
+            <button class="active" data-prompt-mode="polish" type="button">
+              <span class="pl-mode-mark">01</span>
+              <span><b>清晰润色</b><small>在不改变原意的前提下，改善措辞、语序与逻辑衔接</small></span>
+            </button>
+            <button data-prompt-mode="structured" type="button">
+              <span class="pl-mode-mark">02</span>
+              <span><b>专业结构</b><small>补充角色、目标、内容范围、约束与输出要求</small></span>
+            </button>
+          </div>
+          <div class="pl-split">
+            <div class="card pl-pane pl-composer">
+          <div class="card-head">
+                <div><h3>原始提示词</h3><p>粘贴需要改写的内容。</p></div>
+                <span class="pl-count"><b id="plCount">0</b> 字</span>
+              </div>
+              <textarea class="pl-textarea" id="plInput"
+                placeholder="例如：帮我写一个爬虫"></textarea>
+              <div class="pl-pane-foot">
+                <button class="btn btn-ghost" id="plSampleBtn">填入示例</button>
+                <span class="pl-tip" id="plRunTip">请先配置 AI 后开始优化</span>
+              </div>
+            </div>
+            <div class="card pl-pane pl-result-zone" id="plOutput"></div>
+          </div>
+        </div>
+      </section>
+      <section class="view" data-view="assistant">
+        <div class="aa-shell" id="aaRoot" data-no-translate>
+          <header class="card aa-hero">
+            <div class="aa-hero-copy"><p>结合本机使用记录，分析费用、模型与项目的变化。</p></div>
+            <div class="aa-hero-actions"><button type="button" class="aa-connection" id="aaConnect"><span class="aa-status-dot"></span><span><small>分析模型</small><b id="aaModelLabel">请在设置中选择模型</b></span></button></div>
+          </header>
+          <nav class="aa-tabs" id="aaTabs" role="tablist" aria-label="AI 助手功能">
+            <button type="button" class="active" id="aaTabChat" role="tab" data-aa-tab="chat" aria-selected="true" aria-controls="aaBody" tabindex="0">AI 分析</button>
+            <button type="button" id="aaTabReports" role="tab" data-aa-tab="reports" aria-selected="false" aria-controls="aaBody" tabindex="-1">AI 报告</button>
+            <button type="button" id="aaTabPrices" role="tab" data-aa-tab="prices" aria-selected="false" aria-controls="aaBody" tabindex="-1">价格更新</button>
+          </nav>
+          <div id="aaBody" role="tabpanel" aria-labelledby="aaTabChat"></div>
+          <p class="aa-privacy">聚合统计和当前对话会发送到所选 AI 服务，API Key 保存在本机。</p>
+        </div>
+      </section>
+      <section class="view" data-view="ai-test">
+        <div class="iq-studio">
+          <div class="card iq-config">
+            <div class="iq-selection-top">
+              <div class="iq-current"><span class="iq-connection-label">检测模型</span><h3 id="iqCurrentModel" data-no-translate>尚未选择模型</h3><p id="iqCurrentSource" data-no-translate>从 CC Switch 选择，或配置其他连接</p></div>
+              <div class="iq-connection-buttons"><button class="btn btn-primary" id="iqCCOpen" type="button">选择模型</button><button class="btn btn-ghost" id="iqManualOpen" type="button">其他连接</button></div>
+            </div>
+            <div class="iq-actions iq-compact-actions"><label class="iq-thinking-control"><span>思考强度</span><select class="input sm" id="iqThinking"><option value="auto">自动</option><option value="low">低</option><option value="medium">中</option><option value="high" selected>最高</option></select></label><button class="btn btn-ghost" id="iqAvailabilityBtn" type="button"><i class="ico i-radar"></i>自检</button><button class="btn btn-primary" id="iqRunAllBtn" type="button"><i class="ico i-radar"></i>检测全部</button><span class="pl-tip" id="iqTip">选择模型后即可开始检测</span></div>
+          </div>
+          <p class="iq-thinking-note" id="iqThinkingNote" role="status">正在读取模型思考参数…</p>
+          <nav class="iq-tabs" id="iqTabs" aria-label="检测项目">
+            <button data-iq-tab="q1" class="active"><span class="iq-tab-num">01</span><span><b>逻辑题一</b><small>标准答案 21</small></span><em class="iq-tab-state">未检测</em></button>
+            <button data-iq-tab="q2"><span class="iq-tab-num">02</span><span><b>逻辑题二</b><small>标准答案 20</small></span><em class="iq-tab-state">未检测</em></button>
+            <button data-iq-tab="pelican"><span class="iq-tab-num">03</span><span><b>SVG 创作</b><small>生成并渲染动画</small></span><em class="iq-tab-state">未生成</em></button>
+          </nav>
+          <div class="iq-panel active" data-iq-panel="q1"><article class="card iq-question" id="iqQ1"><div class="iq-qhead"><div><span>逻辑题一</span><h3>极端抽取条件下的充分性判断</h3></div><b class="iq-verdict">未检测</b></div><div class="iq-activity idle" id="iqLiveQ1"><span class="iq-activity-dot"></span><span class="iq-activity-copy">等待开始检测</span><span class="iq-activity-time">--</span></div><details class="iq-reference"><summary>题目与判定标准</summary><div class="iq-qbody"><p class="iq-qlead">题 1：在一个黑色的袋子里放有三种口味的糖果，每种糖果有两种不同的形状（圆形和五角星形，不同的形状靠手感可以分辨）。已知不同口味的糖果和不同形状的数量统计如下表。参赛者需要在活动前决定摸出的糖果数目，那么，最少取出多少个糖果才能保证手中同时拥有不同形状的苹果味和桃子味的糖果？</p><div class="iq-qtable-wrap"><table class="iq-qtable"><caption>糖果数量统计</caption><thead><tr><th class="iq-qtable-corner" scope="col">形状 \ 口味</th><th scope="col">苹果味</th><th scope="col">桃子味</th><th scope="col">西瓜味</th></tr></thead><tbody><tr><th scope="row">圆形</th><td>7</td><td>9</td><td>8</td></tr><tr><th scope="row">五角星形</th><td>7</td><td>6</td><td>4</td></tr></tbody></table></div><p class="iq-qnote"><b>满足条件</b>同时手中有圆形苹果味匹配五角星桃子味糖果，或者有圆形桃子味匹配五角星苹果味糖果都满足要求。</p></div></details><div class="iq-panel-actions"><button class="btn btn-primary iq-run" data-iq-mode="q1"><i class="ico i-radar"></i>开始检测</button></div><div class="iq-stream" id="iqStreamQ1" hidden></div><div class="iq-answer-wrap" id="iqA1" hidden><div class="iq-answer-label">模型公开回答</div><pre class="iq-answer">等待模型回答</pre><div class="iq-reason-label">判定说明</div><p class="iq-reason">检测完成后显示判定依据</p></div></article></div>
+          <div class="iq-panel" data-iq-panel="q2"><article class="card iq-question" id="iqQ2"><div class="iq-qhead"><div><span>逻辑题二</span><h3>条件变化下的答案稳定性判断</h3></div><b class="iq-verdict">未检测</b></div><div class="iq-activity idle" id="iqLiveQ2"><span class="iq-activity-dot"></span><span class="iq-activity-copy">等待开始检测</span><span class="iq-activity-time">--</span></div><details class="iq-reference"><summary>题目与判定标准</summary><div class="iq-qbody"><p class="iq-qlead">题 2：在一个黑色的袋子里放有三种口味的糖果，每种糖果有两种不同的形状（圆形和五角星形，不同的形状靠手感可以分辨）。已知不同口味的糖果和不同形状的数量统计如下表。参赛者需要在活动前决定摸出的糖果数目，那么，最少取出多少个糖果才能保证手中同时拥有不同形状的苹果味和桃子味的糖果？</p><div class="iq-qtable-wrap"><table class="iq-qtable"><caption>糖果数量统计</caption><thead><tr><th class="iq-qtable-corner" scope="col">形状 \ 口味</th><th scope="col">苹果味</th><th scope="col">桃子味</th><th scope="col">西瓜味</th></tr></thead><tbody><tr><th scope="row">圆形</th><td>7</td><td>9</td><td>8</td></tr><tr><th scope="row">五角星形</th><td>6</td><td>6</td><td>4</td></tr></tbody></table></div><p class="iq-qnote"><b>满足条件</b>同时手中有圆形苹果味匹配五角星桃子味糖果，或者有圆形桃子味匹配五角星苹果味糖果都满足要求。</p></div></details><div class="iq-panel-actions"><button class="btn btn-primary iq-run" data-iq-mode="q2"><i class="ico i-radar"></i>开始检测</button></div><div class="iq-stream" id="iqStreamQ2" hidden></div><div class="iq-answer-wrap" id="iqA2" hidden><div class="iq-answer-label">模型公开回答</div><pre class="iq-answer">等待模型回答</pre><div class="iq-reason-label">判定说明</div><p class="iq-reason">检测完成后显示判定依据</p></div></article></div>
+          <div class="iq-panel" data-iq-panel="pelican"><div class="iq-pelican-layout"><article class="card iq-pelican-meta"><div class="iq-qhead"><div><span>SVG 创作</span><h3>鹈鹕骑自行车 · SVG 2D 动画</h3></div><b class="iq-verdict" id="iqHtmlVerdict">未生成</b></div><div class="iq-activity idle" id="iqLivePelican"><span class="iq-activity-dot"></span><span class="iq-activity-copy">等待开始生成</span><span class="iq-activity-time">--</span></div><details class="iq-reference"><summary>创作任务</summary><pre class="iq-pelican-prompt">创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画</pre></details><div class="iq-panel-actions"><button class="btn btn-primary iq-run" data-iq-mode="pelican"><i class="ico i-spark"></i>开始生成</button><button class="btn btn-ghost" id="iqHtmlOpen" disabled><i class="ico i-copy"></i>复制 HTML</button></div><div class="iq-stream" id="iqStreamPelican" hidden></div><div class="iq-answer-wrap" id="iqAPelican" hidden><div class="iq-answer-label">模型公开回答</div><pre class="iq-answer">生成完成后显示模型返回内容</pre><div class="iq-reason-label">结果说明</div><p class="iq-reason">生成完成后显示渲染判定</p></div></article><article class="card iq-preview-card"><div class="iq-qhead"><span>预览</span><b class="iq-verdict" id="iqPreviewStatus">固定画布</b></div><div id="iqPreviewPlaceholder" class="iq-preview-placeholder">生成完成后在这里预览动画</div><iframe hidden id="iqPreview" class="iq-preview" sandbox="allow-scripts" title="AI 生成的 SVG 动画预览"></iframe></article></div></div>
+        </div>
+      </section>
+      <section class="view" data-view="settings">
+        <div class="settings-shell">
+          <header class="settings-intro">
+            <div><p class="pl-kicker">PREFERENCES</p><h3>运行与界面偏好</h3><p>所有设置仅保存在本机；扫描参数在下一次任务中生效。</p></div>
+            <div class="settings-intro-actions"><span class="settings-save-status" id="settingsSaveStatus" role="status" aria-live="polite">更改自动保存</span><button class="btn btn-ghost" id="methodBtn"><i class="ico i-info"></i>统计口径</button></div>
+          </header>
+          <div class="settings-grid">
+            <article class="card settings-card" id="cardAIModels" data-no-translate>
+              <div class="card-head"><div><h3>AI 模型设置</h3><p>集中设置 AI 助手与提示词优化使用的模型</p></div></div>
+              <div class="ais-rows"><div class="ais-feature"><div><span>AI 助手</span><b id="aisSummaryassistant">正在读取…</b><p id="aisSourceassistant"></p></div><button type="button" class="btn btn-ghost" data-ai-configure="assistant">设置模型</button></div><div class="ais-feature"><div><span>提示词优化</span><b id="aisSummaryprompt">正在读取…</b><p id="aisSourceprompt"></p></div><button type="button" class="btn btn-ghost" data-ai-configure="prompt">设置模型</button></div></div>
+            </article>
+            <article class="card settings-card" id="cardAppearance">
+              <div class="card-head"><div><h3>外观</h3><p>主题、字体与信息密度</p></div></div>
+              <div class="settings-fields">
+                <label class="field">
+                  <span>界面主题</span>
+                  <select class="input sm" id="themeSelect">
+                    <optgroup label="深色">
+                      <option value="dark">深空</option>
+                      <option value="ocean">海蓝</option>
+                      <option value="neon">霓虹</option>
+                    </optgroup>
+                    <optgroup label="浅色">
+                      <option value="light">亮色</option>
+                      <option value="mint">薄荷</option>
+                      <option value="solar">日光</option>
+                      <option value="ink">水墨</option>
+                    </optgroup>
+                    <option value="auto">跟随系统</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>界面字体</span>
+                  <select class="input sm" id="fontSelect">
+                    <option value="system">系统无衬线</option>
+                    <option value="humanist">人文无衬线</option>
+                    <option value="serif">中文衬线</option>
+                    <option value="mono">等宽字体</option>
+                    <option value="classic">经典宋黑</option>
+                    <option value="rounded">圆润无衬线</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>界面密度</span>
+                  <select class="input sm" id="densitySelect">
+                    <option value="compact">紧凑</option>
+                    <option value="comfortable">舒适</option>
+                    <option value="spacious">宽松</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>主题强调色</span>
+                  <select class="input sm" id="accentSelect">
+                    <option value="theme">跟随主题</option>
+                    <option value="indigo">靛蓝</option>
+                    <option value="violet">紫罗兰</option>
+                    <option value="cyan">青碧</option>
+                    <option value="emerald">翡翠</option>
+                    <option value="amber">琥珀</option>
+                    <option value="rose">玫瑰</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>圆角</span>
+                  <select class="input sm" id="radiusSelect">
+                    <option value="theme">跟随主题</option>
+                    <option value="sharp">硬朗</option>
+                    <option value="soft">柔和</option>
+                    <option value="round">圆润</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>美元兑人民币汇率</span>
+                  <input class="input sm" type="number" step="0.01" min="0.01" max="1000" id="rateInput">
+                </label>
+                <label class="field"><span>金额显示币种</span><select class="input sm" id="displayCurrencySelect"><option value="auto">跟随语言</option><option value="cny">人民币 CNY</option><option value="usd">美元 USD</option></select></label>
+                <label class="field">
+                  <span>界面语言</span>
+                  <select class="input sm" id="languageSelect">
+                    <option value="zh-CN">简体中文</option>
+                    <option value="en-US">English</option>
+                  </select>
+                </label>
+              </div>
+              <div class="settings-switches">
+                <label class="switch-row">
+                  <span><b>数字滚动动画</b><small>切换时间范围时数值平滑过渡</small></span>
+                  <input type="checkbox" id="motionToggle">
+                </label>
+                <label class="switch-row">
+                  <span><b>显示帧率表</b><small>右上角的实时 FPS 指示</small></span>
+                  <input type="checkbox" id="fpsToggle">
+                </label>
+              </div>
+            </article>
+            <article class="card settings-card" id="cardScan">
+              <div class="card-head"><div><h3>扫描与性能</h3><p>默认采用增量索引，优先保持界面响应</p></div></div>
+              <div class="settings-switches">
+                <label class="switch-row">
+                  <span><b>启动时自动扫描</b><small>打开应用后在后台执行一次增量扫描</small></span>
+                  <input type="checkbox" id="scanOnStartToggle">
+                </label>
+                <label class="switch-row">
+                  <span><b>Codex 极速模式</b><small>只读汇总表，跳过逐轮明细</small></span>
+                  <input type="checkbox" id="quickToggle">
+                </label>
+                <label class="switch-row">
+                  <span><b>大库模式</b><small>超过百万条记录时自动限制明细扫描规模，优先保证界面流畅</small></span>
+                  <input type="checkbox" id="bigLibToggle">
+                </label>
+              </div>
+              <div class="settings-fields settings-fields-3">
+                <label class="field"><span>自动扫描（分钟）</span><input class="input sm" type="number" min="0" max="1440" step="1" id="autoScanInput"></label>
+                <label class="field"><span>解析线程</span><input class="input sm" type="number" min="1" max="32" step="1" id="workerInput"></label>
+                <label class="field"><span>单文件上限（MB）</span><input class="input sm" type="number" min="1" max="4096" step="1" id="maxMbInput"></label>
+                <label class="field"><span>明细每页条数</span><input class="input sm" type="number" min="50" max="2000" step="1" id="recPageInput"></label>
+                <label class="field"><span>列表最多展示</span><input class="input sm" type="number" min="10" max="500" step="1" id="listCapInput"></label>
+              </div>
+            </article>
+            <article class="card settings-card" id="cardBudget">
+              <div class="card-head"><div><h3>预算提醒</h3><p>0 表示不设置上限</p></div></div>
+              <div class="settings-fields">
+                <label class="field"><span>预算账期</span><select class="input sm" id="budgetPeriodSelect"><option value="month">自然月</option><option value="week">自然周（周一开始）</option></select></label>
+                <label class="field"><span>Token 预算（本周期）</span><input class="input sm" type="number" min="0" max="1000000000000" step="1" id="budgetTokensInput"></label>
+                <label class="field"><span>成本预算（USD）</span><input class="input sm" type="number" min="0" max="1000000000" step="0.01" id="budgetCostInput"></label>
+                <label class="field"><span>预警阈值（百分比）</span><input class="input sm" type="number" min="0" max="100" step="1" id="warnRatioInput"></label>
+                <label class="field"><span>默认时间范围</span>
+                  <select class="input sm" id="defaultRangeSelect">
+                    <option value="today">今天</option>
+                    <option value="7d">7 天</option>
+                    <option value="30d">30 天</option>
+                    <option value="90d">90 天</option>
+                    <option value="365d">一年</option>
+                    <option value="all">全部</option>
+                  </select>
+                </label>
+              </div>
+            </article>
+            <details class="settings-disclosure"><summary>导航与功能</summary><article class="card settings-card" id="cardFeatures">
+              <div class="card-head"><div><h3>功能开关</h3><p>立即保存，仅隐藏导航入口；采集、统计和已保存的数据不受影响</p></div></div>
+              <div class="settings-switches">
+                <label class="switch-row"><span><b>洞察</b><small>用量趋势与本地分析建议</small></span><input type="checkbox" data-nav-feature="nav_insights"></label>
+                <label class="switch-row"><span><b>按工具</b><small>各编程工具的用量分布</small></span><input type="checkbox" data-nav-feature="nav_tools"></label>
+                <label class="switch-row"><span><b>按模型</b><small>模型排行与计费明细</small></span><input type="checkbox" data-nav-feature="nav_models"></label>
+                <label class="switch-row"><span><b>按项目</b><small>项目用量、模型流水下钻</small></span><input type="checkbox" data-nav-feature="nav_projects"></label>
+                <label class="switch-row"><span><b>按会话</b><small>会话排行与调用详情</small></span><input type="checkbox" data-nav-feature="nav_sessions"></label>
+                <label class="switch-row"><span><b>数据源</b><small>采集状态与来源信息</small></span><input type="checkbox" data-nav-feature="nav_sources"></label>
+                <label class="switch-row"><span><b>成本管理</b><small>项目归档、价格与自身 AI 消费</small></span><input type="checkbox" data-nav-feature="nav_manage"></label>
+                <label class="switch-row"><span><b>AI 助手</b><small>根据当前范围分析用量与费用</small></span><input type="checkbox" data-nav-feature="nav_assistant"></label>
+                <label class="switch-row">
+                  <span><b>AI 提示词优化</b><small>关闭后隐藏「提示词优化」工作区（已保存的配置保留）</small></span>
+                  <input type="checkbox" id="plEnabledToggle" data-nav-feature="pl_enabled">
+                </label>
+                <label class="switch-row">
+                  <span><b>AI 智商检测</b><small>关闭后隐藏「AI 智商检测」题板与检测入口</small></span>
+                  <input type="checkbox" id="iqEnabledToggle" data-nav-feature="iq_enabled">
+                </label>
+              </div>
+            </article></details>
+            <details class="settings-disclosure"><summary>高级 AI 选项</summary><article class="card settings-card" id="cardPrompt">
+              <div class="card-head"><div><h3>提示词优化</h3><p>可选：改写时是否让模型先思考</p></div></div>
+              <div class="settings-switches">
+                <label class="switch-row">
+                  <span><b>展示模型思考过程</b><small>关闭后结果区只显示改写结果，界面更清爽（推荐关闭）</small></span>
+                  <input type="checkbox" id="plThinkToggle">
+                </label>
+                <label class="switch-row">
+                  <span><b>预热模型连接</b><small>可能增加一次付费请求；默认关闭，用量计入自身 AI 消费</small></span>
+                  <input type="checkbox" id="aiWarmupToggle">
+                </label>
+                <label class="switch-row">
+                  <span><b>慢响应时补发请求</b><small>可能重复计费；默认关闭，每次补发均单独记录</small></span>
+                  <input type="checkbox" id="aiHedgeToggle">
+                </label>
+              </div>
+              <div class="settings-fields">
+                <label class="field"><span>生成上限（tokens）</span><input class="input sm" type="number" min="256" max="8192" step="1" id="plMaxTokensInput"></label>
+              </div>
+            </article></details>
+            <article class="card settings-card" id="cardRoots">
+              <div class="card-head"><div><h3>自定义日志目录</h3><p>添加 OpenAI / Anthropic 兼容 usage 日志</p></div></div>
+              <div class="row settings-root-row">
+                <input class="input" id="rootInput" placeholder="例如 D:\\logs\\llm-gateway">
+                <button class="btn btn-primary" id="addRootBtn">添加</button>
+              </div>
+              <ul class="roots settings-roots" id="rootsList"></ul>
+            </article>
+            <details class="settings-disclosure"><summary>备份与迁移</summary><article class="card settings-card" id="cardBackup" data-no-translate>
+              <div class="card-head"><div><h3 id="backupTitle">备份与恢复</h3><p id="backupNote">备份用量、项目、价格版本、对账和提示词历史。密钥不进入备份；恢复保留本机设置。</p></div></div>
+              <div class="settings-fields">
+                <button type="button" class="btn btn-ghost" id="backupExportBtn">下载本地备份</button>
+                <label class="field"><span id="backupFileLabel">选择备份 ZIP（最多32MiB）</span><input class="input" type="file" accept=".zip,application/zip" id="backupFile"></label>
+              </div>
+              <p id="backupPreview" class="ledger-note" role="status" aria-live="polite"></p>
+              <button type="button" class="btn btn-danger" id="backupRestoreBtn" disabled>恢复已预览备份</button>
+            </article></details>
+          </div>
+          <footer class="settings-actions">
+            <span>危险操作不会删除原始日志。</span>
+            <div>
+              <button class="btn btn-ghost" id="forceScanBtn"><i class="ico i-refresh"></i>强制全量重扫</button>
+              <button class="btn btn-danger" id="resetBtn">清空索引</button>
+            </div>
+          </footer>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+<div class="tooltip" id="tooltip"></div>
+<div class="toast-wrap" id="toastWrap" role="status" aria-live="polite" aria-atomic="false"></div>
+<div class="modal-mask confirm-mask" id="confirmMask" role="presentation">
+  <section class="modal confirm-modal" role="alertdialog" aria-modal="true"
+           aria-labelledby="confirmTitle" aria-describedby="confirmMessage" tabindex="-1">
+    <div class="confirm-icon" aria-hidden="true"><i class="ico i-info"></i></div>
+    <div class="confirm-copy">
+      <p class="pl-kicker" id="confirmKicker">CONFIRM ACTION</p>
+      <h3 id="confirmTitle">确认操作</h3>
+      <p id="confirmMessage"></p>
+    </div>
+    <div class="confirm-actions">
+      <button class="btn btn-ghost" id="confirmCancel" type="button">取消</button>
+      <button class="btn btn-primary" id="confirmAccept" type="button">确定</button>
+    </div>
+  </section>
+</div>
+<div class="modal-mask" id="aboutMask" role="presentation">
+  <section class="modal about-modal" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+    <header><div><p class="pl-kicker">TOKENLENS</p><h3 id="aboutTitle">关于</h3></div>
+      <button class="icon-btn" id="aboutClose" title="关闭"><i class="ico i-close"></i></button></header>
+    <div class="about-grid">
+      <div><span id="aboutVersionLabel">版本</span><b id="aboutVersionValue">v1.1.1</b></div>
+      <div><span id="aboutAuthorLabel">作者</span><b>K卷</b></div>
+      <div><span id="aboutRuntimeLabel">运行方式</span><b id="aboutRuntimeValue">本地离线</b></div>
+      <div><span id="aboutScopeLabel">数据范围</span><b id="aboutScopeValue">仅本机日志</b></div>
+    </div>
+    <p class="about-copy" id="aboutCopy">TokenLens 在本机统计 AI 工具用量；使用可选 AI 功能时，输入会发送到你选择的服务。</p>
+    <p class="about-sign">Designed &amp; built by <b>K卷</b></p>
+  </section>
+</div>
+<div class="modal-mask" id="methodMask" role="presentation">
+  <section class="modal methodology-modal" role="dialog" aria-modal="true" aria-labelledby="methodTitle">
+    <header><div><p class="pl-kicker">METHODOLOGY</p><h3 id="methodTitle">统计口径</h3></div>
+      <button class="icon-btn" id="methodClose" title="关闭"><i class="ico i-close"></i></button></header>
+    <div class="prose method-body" id="methodBody"></div>
+  </section>
+</div>
+<div class="modal-mask" id="plHistoryMask" role="presentation">
+  <section class="modal pl-history-modal" role="dialog" aria-modal="true" aria-labelledby="plHistoryTitle">
+    <header><div><p class="pl-kicker">PROMPT HISTORY</p><h3 id="plHistoryTitle">历史提示词</h3></div>
+      <button class="icon-btn" id="plHistoryClose" title="关闭"><i class="ico i-close"></i></button></header>
+    <div class="pl-history-tools"><span id="plHistoryMeta">点击记录可在原位置展开，再次点击即可收起；当前输入不会被修改</span><button class="btn btn-ghost" id="plHistoryClear">清空历史</button></div>
+    <div class="pl-history-list" id="plHistoryList"></div>
+  </section>
+</div>
+<div class="modal-mask" id="plBasisMask" role="presentation">
+  <section class="modal pl-basis-modal" role="dialog" aria-modal="true" aria-labelledby="plBasisTitle">
+    <header><div><p class="pl-kicker">OPTIMIZATION BASIS</p><h3 id="plBasisTitle">优化依据</h3></div>
+      <button class="icon-btn" id="plBasisClose" title="关闭"><i class="ico i-close"></i></button></header>
+    <div id="plBasisBody" class="pl-basis-body"></div>
+  </section>
+</div>
+<div class="modal-mask" id="plConfigMask" role="presentation">
+  <section class="modal pl-config-modal" role="dialog" aria-modal="true" aria-labelledby="plConfigTitle">
+    <header>
+      <div>
+        <p class="pl-kicker">AI CONNECTION</p>
+        <h3 id="plConfigTitle">配置 AI</h3>
+      </div>
+      <button class="icon-btn" id="plConfigClose" title="关闭"><i class="ico i-close"></i></button>
+    </header>
+    <p class="pl-config-intro">填写配置名称、模型、API 地址和 Key，测试连接通过后即可保存。</p>
+    <div class="pl-provider-row" id="plProviderPresets">
+      <span>快速选择</span>
+      <button type="button" class="chip pl-provider" data-provider="openai">OpenAI</button>
+      <button type="button" class="chip pl-provider" data-provider="deepseek">DeepSeek</button>
+      <button type="button" class="chip pl-provider" data-provider="anthropic">Anthropic</button>
+      <button type="button" class="chip pl-provider" data-provider="siliconflow">硅基流动</button>
+    </div>
+    <form id="plConfigForm" novalidate autocomplete="off">
+    <div class="pl-profile-bar">
+      <label class="field"><span>AI 配置</span><select class="input" id="plProfileSelect"><option value="">新建配置</option></select></label>
+      <button type="button" class="btn btn-ghost pl-profile-new" id="plProfileNew"><i class="ico i-plus"></i>新建</button>
+      <button type="button" class="btn btn-ghost btn-danger pl-profile-delete" id="plProfileDelete" disabled><i class="ico i-trash"></i>删除</button>
+    </div>
+    <p class="pl-profile-hint" id="plProfileHint"></p>
+    <div class="pl-form">
+      <label class="field">
+        <span>配置名称</span>
+        <input class="input" id="plProfileName" placeholder="例如：公司 DeepSeek" autocomplete="off">
+      </label>
+      <label class="field">
+        <span>模型</span>
+        <input class="input" id="plModel" placeholder="例如 gpt-4o-mini / deepseek-chat"
+               autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field">
+        <span>API 地址</span>
+        <input class="input" id="plUrl" placeholder="例如 https://api.deepseek.com/v1"
+               autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field">
+        <span>API Key</span>
+        <input class="input" id="plKey" type="password" readonly name="tl-pl-key-nosave"
+               autocomplete="new-password" data-form-type="other" data-lpignore="true"
+               data-1p-ignore data-bwignore placeholder="保存后不再回显；已有 Key 可留空"
+               spellcheck="false">
+      </label>
+    </div>
+    <div class="pl-endpoint">
+      自动识别 <b id="plProto">—</b><span>·</span><code id="plEndpoint">—</code>
+    </div>
+    <div class="pl-actions">
+      <button type="button" class="btn" id="plTestBtn"><i class="ico i-radar"></i>测试连接</button>
+      <button type="button" class="btn btn-primary" id="plSaveBtn" disabled><i class="ico i-check"></i>保存并使用</button>
+      <button type="button" class="btn btn-ghost" id="plSaveNewBtn" disabled><i class="ico i-copy"></i>另存为新配置</button>
+      <button type="button" class="btn btn-ghost btn-danger" id="plClearBtn">清除配置</button>
+      <span class="pl-tip" id="plSaveTip">检测通过后即可保存</span>
+    </div>
+    <div id="plResult"></div>
+    </form>
+  </section>
+</div>
+<div class="drawer-mask" id="drawerMask"></div>
+<aside class="drawer" id="drawer">
+  <header class="drawer-head">
+    <div>
+      <h3 id="drawerTitle">会话详情</h3>
+      <p id="drawerSub"></p>
+    </div>
+    <button class="icon-btn" id="drawerClose" title="关闭 (Esc)"><i class="ico i-close"></i></button>
+  </header>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
+<div class="modal-mask" id="helpMask">
+  <div class="modal">
+    <header><h3>键盘快捷键</h3><button class="icon-btn" id="helpClose"><i class="ico i-close"></i></button></header>
+    <ul class="keys">
+      <li><kbd>1</kbd>…<kbd>9</kbd><span>切换左侧视图</span></li>
+      <li><kbd>/</kbd><span>聚焦搜索框</span></li>
+      <li><kbd>R</kbd><span>重新扫描（增量）</span></li>
+      <li><kbd>⇧</kbd><kbd>R</kbd><span>强制全量重扫</span></li>
+      <li><kbd>T</kbd><span>切换明暗主题</span></li>
+      <li><kbd>E</kbd><span>导出 CSV</span></li>
+      <li><kbd>Esc</kbd><span>关闭抽屉 / 弹层</span></li>
+      <li><kbd>?</kbd><span>显示本帮助</span></li>
+    </ul>
+  </div>
+</div>
+<dialog class="iq-connection-dialog" id="iqCCDialog" aria-labelledby="iqCCDialogTitle">
+  <header class="iq-dialog-head"><div><span class="iq-dialog-eyebrow">CC SWITCH</span><h3 id="iqCCDialogTitle">选择 CC Switch 模型</h3></div><button type="button" class="icon-btn" id="iqCCClose" aria-label="关闭"><i class="ico i-close"></i></button></header>
+  <div class="iq-dialog-body">
+    <label class="field"><span>应用类型</span><select class="input" id="iqCCAppType" data-no-translate></select></label>
+    <div class="iq-provider-label"><label for="iqCCProvider">服务商</label><button type="button" class="btn btn-ghost btn-xs" id="iqCCRefresh">刷新配置</button></div>
+    <input class="input ais-provider-search" id="iqCCProviderSearch" placeholder="搜索服务商…" aria-label="搜索服务商" autocomplete="off">
+    <select class="input" id="iqCCProvider" data-no-translate><option value="">选择服务商</option></select>
+    <p class="ais-provider-count" id="iqCCProviderCount"></p>
+    <label class="field"><span>请求协议</span><select class="input" id="iqCCProtocol"><option value="responses">Responses（原生）</option><option value="openai">Chat Completions</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Gemini</option></select></label>
+    <div class="field iq-model-field"><label for="iqCCModel">模型</label><div id="iqCCPicker" class="iq-model-picker">
+      <div class="iq-model-input-row"><input class="input" id="iqCCModel" placeholder="选择或输入模型 ID" autocomplete="off" maxlength="256"><button type="button" class="iq-picker-button" id="iqCCFetch" title="获取可用模型" aria-label="获取可用模型"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 15v5h16v-5" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button type="button" class="iq-picker-button" id="iqCCToggle" title="展开模型列表" aria-label="展开模型列表" aria-expanded="false" aria-controls="iqCCPopup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+      <div class="iq-model-popup" id="iqCCPopup" hidden><div class="iq-model-search"><i class="ico i-search" aria-hidden="true"></i><input id="iqCCSearch" placeholder="搜索模型…" aria-label="搜索模型" autocomplete="off"></div><div class="iq-model-options" id="iqCCOptions" role="listbox" aria-label="可用模型" data-no-translate></div><div id="iqCCCount" class="iq-model-count"></div></div>
+    </div></div>
+    <p id="iqCCStatus" role="status" aria-live="polite">先选择服务商，再获取模型列表。</p>
+    <p class="iq-dialog-note">密钥由本机读取。获取列表不会发送检测题目。</p>
+  </div>
+  <footer class="iq-dialog-footer"><button class="btn btn-ghost" type="button" id="iqCCCancel">取消</button><button class="btn btn-primary" type="button" id="iqCCApply" disabled>使用此模型</button></footer>
+</dialog>
+<dialog class="iq-connection-dialog" id="iqManualDialog" aria-labelledby="iqManualTitle">
+  <form id="iqManualForm">
+    <header class="iq-dialog-head"><div><span class="iq-dialog-eyebrow">CONNECTION</span><h3 id="iqManualTitle">其他连接</h3></div><button type="button" class="icon-btn" id="iqManualClose" aria-label="关闭"><i class="ico i-close"></i></button></header>
+    <div class="iq-dialog-body">
+      <label class="field"><span>已保存配置</span><select class="input iq-profile-select" id="iqProfileSelect" aria-label="已保存的 AI 配置"><option value="">手动填写配置</option></select></label>
+      <div class="iq-presets" id="iqPresets"><button type="button" class="chip iq-preset" data-model="gpt-6-astra" data-url="https://api.openai.com/v1">GPT</button><button type="button" class="chip iq-preset" data-model="claude-opus-5" data-url="https://api.anthropic.com/v1">Claude</button><button type="button" class="chip iq-preset" data-model="deepseek-flash" data-url="https://api.deepseek.com">DeepSeek</button></div>
+      <label class="field"><span>模型 ID</span><input class="input" id="iqModel" value="zai-org/GLM-4.5-Air" placeholder="例如 gpt-4o-mini" maxlength="256"></label>
+      <label class="field"><span>API URL</span><input class="input" id="iqUrl" value="https://api.siliconflow.cn/v1" placeholder="https://api.openai.com/v1"></label>
+      <label class="field"><span>API Key</span><input class="input" id="iqKey" type="password" name="tl-iq-key-nosave" autocomplete="new-password" data-form-type="other" data-lpignore="true" data-1p-ignore data-bwignore placeholder="仅本次检测使用"></label>
+      <p class="iq-dialog-note">也可以从“管理”中选择已保存的 AI 接入配置。</p>
+    </div>
+    <footer class="iq-dialog-footer"><button class="btn btn-ghost" type="button" id="iqManualCancel">取消</button><button class="btn btn-primary" type="submit" id="iqManualApply">使用此连接</button></footer>
+  </form>
+</dialog>
+<script src="./i18n.js?v=1.1.1"></script>
+<dialog class="iq-connection-dialog" id="aiSettingsDialog" aria-labelledby="aisTitle" data-no-translate>
+  <header class="iq-dialog-head"><div><span class="iq-dialog-eyebrow">AI CONNECTION</span><h3 id="aisTitle">选择分析模型</h3></div><button type="button" class="icon-btn" id="aisClose" aria-label="关闭">×</button></header>
+  <div class="iq-dialog-body">
+    <div class="ais-source-grid"><label class="field"><span>连接来源</span><select class="input" id="aisSource"><option value="profile">TokenLens 已保存连接</option><option value="ccswitch">CC Switch</option><option value="custom">新建自定义连接</option></select></label><label class="field" id="aisAppTypeWrap" hidden><span>应用类型</span><select class="input" id="aisAppType"></select></label></div>
+    <div class="ais-provider-block" id="aisProviderWrap"><div class="iq-provider-label"><label for="aisProvider">连接</label><button type="button" class="btn btn-ghost btn-xs" id="aisRefresh">刷新</button></div><input class="input ais-provider-search" id="aisProviderSearch" placeholder="搜索连接名称或模型…" aria-label="搜索连接" autocomplete="off"><select class="input" id="aisProvider"></select><div class="ais-provider-tools"><p class="ais-provider-count" id="aisProviderCount"></p><button type="button" class="btn btn-ghost btn-xs" id="aisEdit" hidden>编辑连接</button></div></div><div id="aisCustomFields" hidden><label class="field"><span>连接名称</span><input class="input" id="aisName" maxlength="200" placeholder="我的自定义连接"></label><label class="field"><span>API URL</span><input class="input" id="aisUrl" placeholder="https://api.example.com/v1"></label><label class="field"><span>API Key</span><input class="input" id="aisKey" type="password" autocomplete="new-password" placeholder="仅发送至所填服务商" data-lpignore="true" data-1p-ignore></label></div><label class="field"><span>请求协议</span><select class="input" id="aisProtocol"><option value="responses">Responses（原生）</option><option value="openai">Chat Completions</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Gemini</option></select></label><label class="field"><span>思考强度</span><select class="input" id="aisThinking"><option value="auto">自动</option></select></label><p class="iq-dialog-note" id="aisThinkingNote" role="status">正在读取模型思考参数…</p><label class="field"><span>模型</span><div class="ais-model-row"><input class="input" id="aisModel" placeholder="选择或输入模型 ID" maxlength="256"><button type="button" class="btn btn-ghost" id="aisFetch">获取模型</button></div></label><div id="aisModelBrowser" hidden><input class="input" id="aisSearch" placeholder="搜索模型…" aria-label="搜索模型"><div id="aisOptions" role="listbox" aria-label="可用模型"></div></div><p class="iq-dialog-note" id="aisStatus" role="status">可获取模型列表，也可直接输入模型 ID。</p></div><footer class="iq-dialog-footer"><button class="btn btn-ghost" type="button" id="aisCancel">取消</button><button class="btn btn-ghost" type="button" id="aisCheck" disabled>快速自检</button><button class="btn btn-primary" type="button" id="aisSave" disabled>使用此模型</button></footer>
+</dialog>
+<script src="./native.js?v=1.1.1"></script>
+<script src="./money.js?v=1.1.1"></script>
+<script src="./manage.js?v=1.1.1"></script>
+<script src="./overview.js?v=1.1.1"></script>
+<script src="./responsive.js?v=1.1.1"></script>
+<script src="./ccswitch.js?v=1.1.1"></script>
+<link rel="stylesheet" href="./assistant-panels.css?v=1.1.1">
+<dialog class="aa-preview-dialog" id="aaReportPreview" aria-labelledby="aaReportPreviewTitle" data-no-translate>
+  <header class="aa-preview-head"><div><span class="aa-section-kicker">REPORT PREVIEW</span><h3 id="aaReportPreviewTitle">报告预览</h3></div><button type="button" class="btn btn-ghost btn-xs" id="aaReportExport">导出 Markdown</button><button type="button" class="aa-preview-close" id="aaReportClose" aria-label="关闭报告预览">×</button></header>
+  <div class="aa-preview-scroll" id="aaReportPreviewBody"></div>
+</dialog>
+<dialog class="aa-preview-dialog" id="aaPricePreview" aria-labelledby="aaPricePreviewTitle" data-no-translate>
+  <header class="aa-preview-head"><div><span class="aa-section-kicker">PRICE REVIEW</span><h3 id="aaPricePreviewTitle">确认模型新价格</h3></div><button type="button" class="aa-preview-close" id="aaPriceClose" aria-label="关闭价格确认">×</button></header>
+  <div class="aa-preview-scroll" id="aaPricePreviewBody"></div>
+  <footer class="aa-preview-footer"><p id="aaPriceConfirmStatus" role="status"></p><div><button type="button" class="btn btn-ghost" id="aaPriceCancel">暂不保存</button><button type="button" class="btn btn-primary" id="aaPriceConfirm">保存所选价格并更新</button></div></footer>
+</dialog>
+<script src="./assistant-panels.js?v=1.1.1"></script>
+<script src="./assistant.js?v=1.1.1"></script>
+<script src="./assistant-rich.js?v=1.1.1"></script>
+<script src="./assistant-presenter.js?v=1.1.1"></script>
+<script src="./ai-settings.js?v=1.1.1"></script>
+<script src="./sources.js?v=1.1.1"></script>
+<script src="./app.js?v=1.1.1"></script>
+<script src="./workbench.js?v=1.1.1"></script>
+</body>
+</html>

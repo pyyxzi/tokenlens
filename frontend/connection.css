@@ -1,0 +1,45 @@
+/* A quiet workspace; connection details live in focused dialogs. */
+.iq-selection-top{display:flex;align-items:center;justify-content:space-between;gap:24px}
+.iq-current{min-width:0}.iq-connection-label{font-size:11px;color:var(--muted);letter-spacing:.08em}
+.iq-current h3{margin:6px 0;font-size:21px;font-weight:650;overflow-wrap:anywhere;line-height:1.4}
+.iq-current p{margin:0;color:var(--text-2);font-size:12px;overflow-wrap:anywhere}
+.iq-connection-buttons{display:flex;gap:8px;flex-shrink:0}
+.iq-config .iq-compact-actions{margin-top:20px;padding-top:16px;border-top:1px solid var(--border);gap:10px;flex-wrap:wrap}
+.iq-thinking-control{display:flex;align-items:center;gap:8px;color:var(--text-2);font-size:12px;margin-right:4px}
+.iq-thinking-control .input{width:84px}.iq-compact-actions .pl-tip{flex:1;min-width:160px;font-size:12px}
+.iq-reference{border:1px solid var(--border);border-radius:10px;overflow:hidden;margin:14px 0}
+.iq-reference summary{cursor:pointer;padding:12px 14px;font-size:12px;color:var(--text-2)}
+.iq-reference[open] summary{border-bottom:1px solid var(--border)}
+.iq-reference .iq-qbody{padding:14px;margin:0}.iq-reference .iq-pelican-prompt{margin:0;border:0;border-radius:0}
+.iq-answer-wrap[hidden],.iq-preview[hidden],.iq-preview-placeholder[hidden],.iq-model-popup[hidden]{display:none!important}
+.iq-preview-placeholder{display:grid;place-items:center;min-height:240px;color:var(--muted);font-size:13px;text-align:center;padding:24px;border:1px dashed var(--border-strong);border-radius:12px;margin-top:16px}
+.iq-connection-dialog{color:var(--text);background:var(--bg-1);border:1px solid var(--border-strong);border-radius:18px;padding:0;width:min(620px,calc(100vw - 32px));max-width:none;max-height:calc(100dvh - 40px);overflow:auto;box-shadow:0 28px 90px rgba(0,0,0,.35)}
+.iq-connection-dialog::backdrop{background:rgba(0,0,0,.5);backdrop-filter:blur(4px)}
+.iq-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:24px 26px 18px;border-bottom:1px solid var(--border)}
+.iq-dialog-eyebrow{font-size:10px;letter-spacing:.14em;color:var(--muted)}
+.iq-dialog-head h3{font-size:19px;margin:6px 0 0;line-height:1.5}
+.iq-dialog-body{display:flex;flex-direction:column;gap:17px;padding:22px 26px}
+.iq-dialog-body .field{margin:0;min-width:0}.iq-dialog-body .field>span,.iq-model-field>label,.iq-provider-label>label{font-size:13px;color:var(--text-2)}
+.iq-provider-label{display:flex;justify-content:space-between;align-items:center;margin-bottom:-12px}
+.iq-dialog-body>.input{width:100%}.iq-dialog-body .input{min-width:0;height:44px}
+.iq-dialog-body .iq-profile-select{max-width:none;width:100%}
+.iq-dialog-body .iq-presets{justify-content:flex-start;gap:8px;margin-top:-7px}
+.iq-dialog-footer{display:flex;justify-content:flex-end;gap:10px;padding:17px 26px;border-top:1px solid var(--border)}
+.iq-dialog-note{font-size:11px;color:var(--muted);line-height:1.7;margin:0}
+#iqCCStatus{margin:0;color:var(--text-2);font-size:12px;line-height:1.7;min-height:20px;overflow-wrap:anywhere}
+#iqCCStatus.error{color:var(--warn)}
+.iq-model-picker{position:relative;min-width:0}.iq-model-input-row{display:grid;grid-template-columns:minmax(0,1fr) 44px 44px;gap:7px}
+.iq-picker-button{display:grid;place-items:center;border:1px solid var(--border-strong);border-radius:9px;background:var(--panel);color:var(--text);cursor:pointer;padding:10px}
+.iq-picker-button svg{width:22px;height:22px}.iq-picker-button:hover{background:var(--panel-3)}
+.iq-picker-button:focus-visible,.iq-model-option:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.iq-picker-button.loading svg{opacity:.4}.iq-picker-button:disabled{cursor:wait;opacity:.6}
+.iq-model-popup{margin-top:8px;position:relative;background:var(--bg-1);border:1px solid var(--border-strong);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.15);overflow:hidden}
+.iq-model-search{display:flex;align-items:center;gap:10px;padding:12px 15px;border-bottom:1px solid var(--border)}
+.iq-model-search .ico{color:var(--muted)}.iq-model-search input{font:inherit;font-size:14px;color:var(--text);background:transparent;border:0;outline:0;width:100%;min-width:0}
+.iq-model-options{max-height:240px;overflow:auto;padding:7px;overscroll-behavior:contain}
+.iq-model-group{font-size:11px;color:var(--muted);padding:10px 10px 6px}
+.iq-model-option{display:block;text-align:left;width:100%;font:inherit;font-size:14px;line-height:1.5;padding:10px;border:0;border-radius:7px;background:transparent;color:var(--text);cursor:pointer;overflow-wrap:anywhere}
+.iq-model-option:hover,.iq-model-option.active,.iq-model-option.selected{background:var(--panel-3)}
+.iq-model-empty{font-size:12px;color:var(--muted);padding:12px;line-height:1.7}
+.iq-model-count{font-size:10px;color:var(--muted);padding:9px 15px;border-top:1px solid var(--border)}
+@media(max-width:600px){.iq-selection-top{align-items:flex-start;flex-direction:column;gap:14px}.iq-connection-buttons{width:100%}.iq-connection-buttons .btn{flex:1}.iq-current h3{font-size:18px}.iq-config .iq-compact-actions{margin-top:16px}.iq-compact-actions .pl-tip{flex-basis:100%;min-width:0}.iq-dialog-head{padding:18px}.iq-dialog-body{padding:18px;gap:16px}.iq-dialog-footer{padding:15px 18px}.iq-model-input-row{grid-template-columns:minmax(0,1fr) 40px 40px;gap:5px}.iq-picker-button{padding:8px}.iq-model-options{max-height:200px}.iq-dialog-head h3{font-size:17px}.iq-connection-dialog{border-radius:14px;max-height:calc(100dvh - 24px)}}

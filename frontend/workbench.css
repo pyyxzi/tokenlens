@@ -1,0 +1,41 @@
+/* Keep TokenLens's original layout, theme and user-selected density. */
+.brand-mark img{display:block;width:100%;height:100%;border-radius:11px}
+.view-kicker:empty{display:none}
+.manage-stats{gap:var(--d-gap);margin-bottom:var(--d-gap)}
+.manage-stats article{padding:var(--d-kpi-pad);gap:7px}
+.manage-tabs{padding-bottom:8px;margin-bottom:var(--d-gap)}
+.manage-tabs button{padding:7px 12px}
+.manage-body{padding:var(--d-card-pad);min-height:0}
+.manage-intro{gap:var(--d-gap);margin-bottom:14px}
+.manage-intro h3{font-size:16px;margin-bottom:5px}
+.manage-form{gap:var(--d-gap);padding:14px 0;margin:12px 0}
+.manage-table th,.manage-table td{padding:var(--d-cell-pad)}
+.manage-table small{margin-top:3px}
+.manage-table th.manage-num-head{text-align:right}
+.manage-pager{padding:10px 0}
+a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.settings-shell{max-width:1100px}
+.settings-intro{padding-top:2px;gap:14px;align-items:center!important;flex-direction:row!important}
+.settings-intro h3{font-size:19px}
+.settings-intro .pl-kicker{display:none}
+.settings-intro-actions{display:flex;align-items:center;gap:12px;flex:none}
+.settings-save-status{color:var(--muted);font-size:11px;margin:0;text-align:right}
+.settings-save-status.error{color:var(--danger,#f87171)}
+.main:has(.view[data-view="settings"].active) .topbar{flex-flow:row nowrap!important;min-height:68px!important}
+.main:has(.view[data-view="settings"].active) .topbar .tb-left{flex:1!important}
+.main:has(.view[data-view="settings"].active) .topbar .tb-right{width:auto;flex:0 0 auto!important;justify-content:flex-end!important}
+.main:has(.view[data-view="settings"].active) .topbar #searchBox,.main:has(.view[data-view="settings"].active) .topbar .menu-wrap{display:none!important}
+.settings-disclosure{grid-column:1/-1;border:1px solid var(--border);border-radius:var(--radius);background:var(--panel);overflow:hidden}
+.settings-disclosure>summary{padding:13px 16px;font-size:13px;font-weight:600;cursor:pointer;color:var(--text)}
+.settings-disclosure>.settings-card{border:0;box-shadow:none;border-radius:0;padding-top:5px;background:transparent}
+.settings-disclosure .settings-switches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 20px}
+.settings-card .settings-fields{gap:12px}
+.settings-card .switch-row{padding:9px 0}
+.service-status{color:var(--muted);font-size:11px;padding:0 4px;max-width:220px}
+.service-status[hidden]{display:none}
+.service-status.error{color:var(--danger,#f87171)}
+html:is([data-theme="dark"],[data-theme="ocean"],[data-theme="neon"]) .segmented button.active,
+html[data-accent]:not([data-accent="theme"]) .segmented button.active{color:#0b1020}
+html:is([data-theme="dark"],[data-theme="ocean"],[data-theme="neon"]) .tb-right #rangeSeg button.active,
+html[data-accent]:not([data-accent="theme"]) .tb-right #rangeSeg button.active{color:#0b1020}
+@media(max-width:800px){.manage-body{padding:14px}.settings-disclosure .settings-switches{grid-template-columns:1fr}.settings-intro-actions{gap:8px;flex-direction:column;align-items:flex-end}.settings-save-status{font-size:10px;max-width:120px}.settings-intro h3{font-size:18px}.settings-intro .btn{font-size:11px;padding:7px 10px}}

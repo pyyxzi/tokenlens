@@ -1,0 +1,17 @@
+node_modules/
+target/
+dist/
+build/
+__pycache__/
+*.py[cod]
+*.exe
+*.msi
+*.zip
+*.db
+*.sqlite*
+*.log
+.env*
+.venv/
+.vscode/
+src-tauri/gen/
+src-tauri/binaries/

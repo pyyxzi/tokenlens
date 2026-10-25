@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    name: Backend tests (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Compile all modules
+        run: python -m compileall -q backend/tokenlens backend/service.py
+
+      - name: Run unit tests
+        run: python -m unittest discover -s backend/tests -v
+
+  frontend:
+    name: Frontend asset integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify index.html references resolve
+        run: |
+          python tools/check_frontend_assets.py
+
+  rust:
+    name: Rust host check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (rust-toolchain.toml pins 1.94.1)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cargo check the Tauri host
+        working-directory: src-tauri
+        run: cargo check --locked
