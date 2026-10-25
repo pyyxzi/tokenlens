@@ -294,6 +294,12 @@ class Store:
             self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.execute("PRAGMA temp_store=FILE")
             self._conn.execute("PRAGMA temp.cache_size=-2048")
+            # 大库读性能：mmap 免掉聚合扫描时的内核拷贝；连接页缓存默认
+            # 只有 2MB，GROUP BY 中间集反复换页是数十万行汇总变慢的主要
+            # 来源之一。autocheckpoint 提高一档，整库重建时减少中途刷盘。
+            self._conn.execute("PRAGMA mmap_size=268435456")
+            self._conn.execute("PRAGMA cache_size=-32768")
+            self._conn.execute("PRAGMA wal_autocheckpoint=2000")
             self._setup_fts()
             self._conn.commit()
 
@@ -552,6 +558,9 @@ class Store:
         with self._lock:
             try:
                 self._conn.commit()
+                # 退出前更新查询计划统计，让下一次启动的大范围汇总直接
+                # 用上准确的索引选择（PRAGMA optimize 开销毫秒级）。
+                self._conn.execute("PRAGMA optimize")
                 self._conn.close()
             except Exception:
                 pass

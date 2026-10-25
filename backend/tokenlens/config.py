@@ -37,7 +37,7 @@ DEFAULTS = {
     "range": "30d",
     "codex_quick": False,        # True = 只读 thread 汇总表，跳过 rollout 明细（更快）
     "max_file_mb": 400,          # 单文件解析上限
-    "workers": 4,
+    "workers": 8,                # 并行解析线程：zstd 解压与文件 IO 释放 GIL，8 线程显著快于 4（可在设置中调 1-32）
     "api_log_roots": [],         # 自定义 API 日志目录
     "usd_to_cny": 7.20,
     "display_currency": "auto",  # display only; amounts remain USD in storage
