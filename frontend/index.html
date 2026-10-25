@@ -4,18 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TokenLens</title>
-<link rel="icon" type="image/png" sizes="32x32" href="./icon32.png?v=1.2.3">
-<link rel="icon" type="image/png" sizes="256x256" href="./icon256.png?v=1.2.3">
-<link rel="apple-touch-icon" href="./icon256.png?v=1.2.3">
-<link rel="stylesheet" href="./app.css?v=1.2.3">
-<link rel="stylesheet" href="./manage.css?v=1.2.3">
-<link rel="stylesheet" href="./responsive.css?v=1.2.3">
-<link rel="stylesheet" href="./connection.css?v=1.2.3">
-<link rel="stylesheet" href="./assistant.css?v=1.2.3">
-<link rel="stylesheet" href="./ai-settings.css?v=1.2.3">
-<link rel="stylesheet" href="./context.css?v=1.2.3">
-<link rel="stylesheet" href="./sources.css?v=1.2.3">
-<link rel="stylesheet" href="./workbench.css?v=1.2.3">
+<link rel="icon" type="image/png" sizes="32x32" href="./icon32.png?v=1.2.4">
+<link rel="icon" type="image/png" sizes="256x256" href="./icon256.png?v=1.2.4">
+<link rel="apple-touch-icon" href="./icon256.png?v=1.2.4">
+<link rel="stylesheet" href="./app.css?v=1.2.4">
+<link rel="stylesheet" href="./manage.css?v=1.2.4">
+<link rel="stylesheet" href="./responsive.css?v=1.2.4">
+<link rel="stylesheet" href="./connection.css?v=1.2.4">
+<link rel="stylesheet" href="./assistant.css?v=1.2.4">
+<link rel="stylesheet" href="./ai-settings.css?v=1.2.4">
+<link rel="stylesheet" href="./context.css?v=1.2.4">
+<link rel="stylesheet" href="./sources.css?v=1.2.4">
+<link rel="stylesheet" href="./workbench.css?v=1.2.4">
 </head>
 <body>
 <div class="aurora">
@@ -58,7 +58,7 @@
       <button class="btn btn-ghost nav-toggle" id="navToggle" aria-label="打开导航" aria-controls="nav" aria-expanded="false">☰</button>
       <div class="tb-left">
         <span class="brand-mark" role="img" aria-label="TokenLens">
-          <img src="./icon256.png?v=1.2.3" alt="" width="38" height="38">
+          <img src="./icon256.png?v=1.2.4" alt="" width="38" height="38">
         </span>
         <div class="tb-titles">
           <p id="viewKicker" class="view-kicker"></p>
@@ -750,20 +750,20 @@
     <footer class="iq-dialog-footer"><button class="btn btn-ghost" type="button" id="iqManualCancel">取消</button><button class="btn btn-primary" type="submit" id="iqManualApply">使用此连接</button></footer>
   </form>
 </dialog>
-<script src="./i18n.js?v=1.2.3"></script>
+<script src="./i18n.js?v=1.2.4"></script>
 <dialog class="iq-connection-dialog" id="aiSettingsDialog" aria-labelledby="aisTitle" data-no-translate>
   <header class="iq-dialog-head"><div><span class="iq-dialog-eyebrow">AI CONNECTION</span><h3 id="aisTitle">选择分析模型</h3></div><button type="button" class="icon-btn" id="aisClose" aria-label="关闭">×</button></header>
   <div class="iq-dialog-body">
     <div class="ais-source-grid"><label class="field"><span>连接来源</span><select class="input" id="aisSource"><option value="profile">TokenLens 已保存连接</option><option value="ccswitch">CC Switch</option><option value="custom">新建自定义连接</option></select></label><label class="field" id="aisAppTypeWrap" hidden><span>应用类型</span><select class="input" id="aisAppType"></select></label></div>
     <div class="ais-provider-block" id="aisProviderWrap"><div class="iq-provider-label"><label for="aisProvider">连接</label><button type="button" class="btn btn-ghost btn-xs" id="aisRefresh">刷新</button></div><input class="input ais-provider-search" id="aisProviderSearch" placeholder="搜索连接名称或模型…" aria-label="搜索连接" autocomplete="off"><select class="input" id="aisProvider"></select><div class="ais-provider-tools"><p class="ais-provider-count" id="aisProviderCount"></p><button type="button" class="btn btn-ghost btn-xs" id="aisEdit" hidden>编辑连接</button></div></div><div id="aisCustomFields" hidden><label class="field"><span>连接名称</span><input class="input" id="aisName" maxlength="200" placeholder="我的自定义连接"></label><label class="field"><span>API URL</span><input class="input" id="aisUrl" placeholder="https://api.example.com/v1"></label><label class="field"><span>API Key</span><input class="input" id="aisKey" type="password" autocomplete="new-password" placeholder="仅发送至所填服务商" data-lpignore="true" data-1p-ignore></label></div><label class="field"><span>请求协议</span><select class="input" id="aisProtocol"><option value="responses">Responses（原生）</option><option value="openai">Chat Completions</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Gemini</option></select></label><label class="field"><span>思考强度</span><select class="input" id="aisThinking"><option value="auto">自动</option></select></label><p class="iq-dialog-note" id="aisThinkingNote" role="status">正在读取模型思考参数…</p><label class="field"><span>模型</span><div class="ais-model-row"><input class="input" id="aisModel" placeholder="选择或输入模型 ID" maxlength="256"><button type="button" class="btn btn-ghost" id="aisFetch">获取模型</button></div></label><div id="aisModelBrowser" hidden><input class="input" id="aisSearch" placeholder="搜索模型…" aria-label="搜索模型"><div id="aisOptions" role="listbox" aria-label="可用模型"></div></div><p class="iq-dialog-note" id="aisStatus" role="status">可获取模型列表，也可直接输入模型 ID。</p></div><footer class="iq-dialog-footer"><button class="btn btn-ghost" type="button" id="aisCancel">取消</button><button class="btn btn-ghost" type="button" id="aisCheck" disabled>快速自检</button><button class="btn btn-primary" type="button" id="aisSave" disabled>使用此模型</button></footer>
 </dialog>
-<script src="./native.js?v=1.2.3"></script>
-<script src="./money.js?v=1.2.3"></script>
-<script src="./manage.js?v=1.2.3"></script>
-<script src="./overview.js?v=1.2.3"></script>
-<script src="./responsive.js?v=1.2.3"></script>
-<script src="./ccswitch.js?v=1.2.3"></script>
-<link rel="stylesheet" href="./assistant-panels.css?v=1.2.3">
+<script src="./native.js?v=1.2.4"></script>
+<script src="./money.js?v=1.2.4"></script>
+<script src="./manage.js?v=1.2.4"></script>
+<script src="./overview.js?v=1.2.4"></script>
+<script src="./responsive.js?v=1.2.4"></script>
+<script src="./ccswitch.js?v=1.2.4"></script>
+<link rel="stylesheet" href="./assistant-panels.css?v=1.2.4">
 <dialog class="aa-preview-dialog" id="aaReportPreview" aria-labelledby="aaReportPreviewTitle" data-no-translate>
   <header class="aa-preview-head"><div><span class="aa-section-kicker">REPORT PREVIEW</span><h3 id="aaReportPreviewTitle">报告预览</h3></div><button type="button" class="btn btn-ghost btn-xs" id="aaReportExport">导出 Markdown</button><button type="button" class="aa-preview-close" id="aaReportClose" aria-label="关闭报告预览">×</button></header>
   <div class="aa-preview-scroll" id="aaReportPreviewBody"></div>
@@ -773,13 +773,13 @@
   <div class="aa-preview-scroll" id="aaPricePreviewBody"></div>
   <footer class="aa-preview-footer"><p id="aaPriceConfirmStatus" role="status"></p><div><button type="button" class="btn btn-ghost" id="aaPriceCancel">暂不保存</button><button type="button" class="btn btn-primary" id="aaPriceConfirm">保存所选价格并更新</button></div></footer>
 </dialog>
-<script src="./assistant-panels.js?v=1.2.3"></script>
-<script src="./assistant.js?v=1.2.3"></script>
-<script src="./assistant-rich.js?v=1.2.3"></script>
-<script src="./assistant-presenter.js?v=1.2.3"></script>
-<script src="./ai-settings.js?v=1.2.3"></script>
-<script src="./sources.js?v=1.2.3"></script>
-<script src="./app.js?v=1.2.3"></script>
-<script src="./workbench.js?v=1.2.3"></script>
+<script src="./assistant-panels.js?v=1.2.4"></script>
+<script src="./assistant.js?v=1.2.4"></script>
+<script src="./assistant-rich.js?v=1.2.4"></script>
+<script src="./assistant-presenter.js?v=1.2.4"></script>
+<script src="./ai-settings.js?v=1.2.4"></script>
+<script src="./sources.js?v=1.2.4"></script>
+<script src="./app.js?v=1.2.4"></script>
+<script src="./workbench.js?v=1.2.4"></script>
 </body>
 </html>
