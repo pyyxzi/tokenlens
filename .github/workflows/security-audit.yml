@@ -1,0 +1,42 @@
+name: Security audit
+
+# Non-blocking advisory scan so known CVEs surface without gating PRs.
+# Runs weekly, on demand, and on dependency changes to the main branch.
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - "src-tauri/Cargo.lock"
+      - "backend/requirements*.txt"
+  workflow_dispatch:
+
+jobs:
+  cargo-audit:
+    name: cargo audit (Rust)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: Audit Cargo.lock advisories
+        working-directory: src-tauri
+        run: cargo audit
+
+  pip-audit:
+    name: pip-audit (Python)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit
+      - name: Audit backend requirements
+        run: pip-audit -r backend/requirements.txt --disable-pip
+      - name: Audit build requirements
+        run: pip-audit -r backend/requirements-build.txt

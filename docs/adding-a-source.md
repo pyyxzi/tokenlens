@@ -53,6 +53,15 @@ The frontend icon goes in `frontend/source-icons/` (see its `NOTICE.md` for lice
 2. **PARSER_VERSION**: if you change the semantics of any existing adapter, bump `PARSER_VERSION` in `adapters.py` so unchanged files are re-scanned.
 3. **Tests**: add fixtures under `backend/tests/` using **synthetic** JSONL lines (see `test_adapters.py`'s `ClaudeCodeParserTests` for the pattern). Cover: a normal record, a skipped/empty record, and idempotent replay (`event_id` stability). Real personal logs must never be committed.
 
+## Updating prices
+
+The built-in price table lives in [`backend/tokenlens/prices_data.py`](../backend/tokenlens/prices_data.py) — a flat, comment-annotated data module that anyone can PR against. Rules:
+
+1. Each entry is `(model id, input, output, cache read, cache write)` in **USD per million tokens**, id lowercase, exact match only.
+2. Cite the source (vendor pricing page or billing snapshot) in the row comment.
+3. Never edit or delete historical prices — old logs must keep being priced at what they cost at the time; new tiers get new rows.
+4. Aliases (`_BUILTIN_ALIASES` in `pricing.py`) are only expanded for same-price tiers verified from snapshots. Unknown tiers stay unpriced rather than inheriting a base model's price — a missing price is recoverable, a wrong one poisons the ledger.
+
 ## Checklist before opening the PR
 
 - [ ] Synthetic-fixture tests pass: `python -m unittest discover -s backend/tests -v`
