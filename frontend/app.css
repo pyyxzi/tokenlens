@@ -1877,3 +1877,7 @@ html[data-font="mono"] body{letter-spacing:0}
 .src-error-body>span{overflow-wrap:anywhere}
 .src-error-body em{font-style:normal;font-size:10.5px;color:var(--muted)}
 .src-error-actions{display:flex;gap:6px;flex-wrap:wrap}
+
+/* ---- 关于弹窗：项目主页外链（经 open_external 走系统浏览器） ---- */
+.about-grid .about-link{color:var(--accent);text-decoration:none;font-weight:600;font-size:12px}
+.about-grid .about-link:hover{text-decoration:underline}

@@ -2002,8 +2002,9 @@
         return;
       } finally { if (S.recordsAbort === controller) S.recordsAbort = null; }
       if (request !== S.recRequest || epoch !== S.epoch || S.view !== 'records') return;
-      // 只缓存「当前页」，避免翻页把内存撑大
-      if (Object.keys(S.recCache).length > 6) S.recCache = {};
+      // 只缓存「当前页」；逐出最旧一页而不是整表清空，翻页往返不反复回源
+      const cacheKeys = Object.keys(S.recCache);
+      if (cacheKeys.length >= 6) delete S.recCache[cacheKeys[0]];
       S.recCache[qkey] = r;
     }
     if (request !== S.recRequest || epoch !== S.epoch || S.view !== 'records') return;
@@ -3150,6 +3151,7 @@
     set('#aboutRuntimeLabel', '运行方式', 'Runtime');
     set('#aboutRuntimeValue', 'Tauri 桌面 · 本地统计', 'Tauri desktop · local analytics');
     set('#aboutScopeLabel', '数据范围', 'Data scope');
+    set('#aboutProjectLabel', '项目主页', 'Project home');
     set('#aboutScopeValue', '本机日志与导入数据', 'Local logs and imported data');
     $('#aboutVersionValue').textContent = 'v'+(S.boot?.version || '1.2.3');
     set('#aboutVersionLabel', '版本', 'Version');
