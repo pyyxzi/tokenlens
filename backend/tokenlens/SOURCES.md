@@ -5,6 +5,38 @@ Sources were checked on 2026-10-15. These references establish local formats;
 installed versions may expose fewer fields. Detected installations without
 readable usage remain excluded from totals. An empty log is not a zero bill.
 
+Accounting hardening (2026-10-26, PARSER_VERSION 11) — dedup semantics
+changed for seven adapters; the first scan after upgrading rebuilds:
+
+- Kimi: unscoped records are now classified per session. A monotonic,
+  doubling sequence whose last value covers the session's turn totals is a
+  cumulative mirror and is dropped (it used to be summed as turns, doubling
+  totals). Sessions without turn detail keep the latest session-level value
+  per model, so multi-model sessions no longer lose all but one model.
+- CherryStudio: records are identified by their (prompt, completion, total)
+  triple, so the same usage surviving in several LevelDB files (.log + .ldb
+  during compaction) is stored once. Identical legitimate calls collapse too;
+  undercount is preferred over the previous overcount in this approximate
+  source.
+- Aider: model names are extracted from chat-history headings with their
+  date/time prefix stripped, so estimates match the price table again.
+- ApiLog: flat reasoning_tokens are treated as included in completion_tokens
+  for OpenRouter-style logs (nested usage.cost object or a provider field);
+  other gateways keep them separate.
+- Copilot CLI: cumulative shutdown snapshots are identified by (session,
+  model) instead of file path, so a resumed session writing a new
+  session-state directory no longer double-counts.
+- LM Studio: a node whose usage equals the sum of its recorded children is
+  an aggregate wrapper and is skipped.
+- DeepSeek Harness: projection caches are matched to parsed event streams by
+  the session id inside the JSON, not by filename, so naming mismatches no
+  longer double-count.
+
+Known open accounting assumptions (need real-sample confirmation before
+changing direction): Cline family subtracts cache reads but not cache writes
+from tokensIn; OpenCode stores tokens_reasoning without subtracting it from
+output; ApiLog records a plain "cost" field as USD regardless of currency.
+
 Gemini CLI
 ----------
 Official session management and recording implementation:
