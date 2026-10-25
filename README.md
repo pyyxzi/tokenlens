@@ -11,14 +11,14 @@
 
 ---
 
-![Overview dashboard](docs/screenshots/overview.png)
+![Overview dashboard](docs/screenshots/en/overview.png)
 
 <details>
 <summary><b>More screenshots</b></summary>
 
 | Usage by tool | Data sources |
 | :---: | :---: |
-| ![Usage by tool](docs/screenshots/by-tool.png) | ![Data sources](docs/screenshots/sources.png) |
+| ![Usage by tool](docs/screenshots/en/by-tool.png) | ![Data sources](docs/screenshots/en/sources.png) |
 
 </details>
 
@@ -34,6 +34,7 @@ TokenLens does that once, properly:
 - **Built for big histories.** Incremental scanning (unchanged files are skipped by fingerprint), paginated drill-downs, background aggregation — validated against a 300k-record, ~260 MiB database.
 - **Import & export.** CSV / JSON / JSONL import with full pre-validation, snapshot backup & restore, CSV export.
 - **Optional AI analysis.** A built-in assistant can analyze usage, draft reports and optimize prompts — it only ever calls the provider *you* configure, and only when you ask.
+- **Signed auto-updates.** The app quietly checks GitHub Releases and offers one-click signed updates (tray menu → *Check for updates…*).
 
 ## Supported data sources
 
@@ -90,6 +91,7 @@ python -m unittest discover -s backend/tests -v
 - Statistics are computed locally; the database lives in the system app-data directory.
 - The analytics service binds to `127.0.0.1` on a random port, authenticated with a per-launch secret; the frontend talks to it only through the native bridge.
 - The optional AI assistant sends requests **only** to the provider you configure, only when you trigger it. Credential handling is described in [SECURITY.md](SECURITY.md).
+- The only outbound request the app makes on its own is a version check against this repository's GitHub Releases; updates are minisign-signed and verified before install.
 
 ## Documentation
 

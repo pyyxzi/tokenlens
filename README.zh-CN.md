@@ -14,13 +14,15 @@ English | [简体中文](README.zh-CN.md)
 ![总览仪表盘](docs/screenshots/overview.png)
 
 <details>
-<summary><b>更多截图</b></summary>
+<summary><b>更多截图（中文界面）</b></summary>
 
 | 按工具分布 | 数据源 |
 | :---: | :---: |
 | ![按工具分布](docs/screenshots/by-tool.png) | ![数据源](docs/screenshots/sources.png) |
 
 </details>
+
+> English UI screenshots are available in the [English README](README.md).
 
 ## 为什么需要 TokenLens
 
@@ -34,6 +36,7 @@ TokenLens 把这件事一次性做对：
 - **为大量历史而生。** 增量扫描（未变化的文件按指纹跳过）、分页下钻、后台聚合——已在 30 万条记录、约 260 MiB 数据库上验证。
 - **导入导出。** CSV / JSON / JSONL 导入（先完整校验再入库）、快照备份恢复、CSV 导出。
 - **可选 AI 分析。** 内置助手可以分析用量、生成报告、优化提示词——只调用你自己配置的服务商，且只在你主动触发时请求。
+- **签名自动更新。** 后台检查 GitHub Releases，一键安装经过 minisign 签名校验的更新（托盘菜单 → 检查更新…）。
 
 ## 支持的数据源
 
@@ -90,6 +93,7 @@ python -m unittest discover -s backend/tests -v
 - 统计在本机完成，数据库保存在系统应用数据目录。
 - 统计服务只绑定 `127.0.0.1` 的随机端口，用每次启动生成的一次性密钥鉴权；前端只通过原生桥接访问它。
 - 可选 AI 助手**只**向你配置的服务商发请求，且只在你主动触发时。凭据处理见 [SECURITY.md](SECURITY.md)。
+- 应用自身唯一的外发请求是对本仓库 GitHub Releases 的版本检查；更新包经 minisign 签名校验后才安装。
 
 ## 文档
 

@@ -2,6 +2,7 @@
 mod service;
 
 use tauri::{Emitter, Manager, menu::{Menu, MenuItem}, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}, webview::NewWindowResponse};
+use tauri_plugin_dialog::DialogExt;
 use service::Service;
 
 fn external_url(value: &str) -> Result<String, String> {
@@ -53,9 +54,59 @@ fn reveal(app: &tauri::AppHandle, view: Option<&str>) {
     }
 }
 
+static UPDATE_CHECKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn notice(app: &tauri::AppHandle, message: String) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = app.dialog().message(message).title("TokenLens 更新").blocking_show();
+    });
+}
+
+async fn confirm(app: &tauri::AppHandle, message: String) -> bool {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::MessageDialogButtons;
+        app.dialog().message(message).title("TokenLens 更新")
+            .buttons(MessageDialogButtons::OkCancelCustom("立即更新".into(), "稍后".into()))
+            .blocking_show()
+    }).await.unwrap_or(false)
+}
+
+// One update flow at a time; failures only surface when the user asked for them.
+async fn run_update_check(app: tauri::AppHandle, manual: bool) {
+    use std::sync::atomic::Ordering;
+    use tauri_plugin_updater::UpdaterExt;
+    if UPDATE_CHECKING.swap(true, Ordering::SeqCst) { return; }
+    let outcome = async {
+        let updater = app.updater().map_err(|e| format!("更新组件不可用：{e}"))?;
+        let Some(update) = updater.check().await
+            .map_err(|e| format!("检查更新失败：{e}"))?
+        else {
+            if manual { notice(&app, "当前已是最新版本。".into()); }
+            return Ok(());
+        };
+        if !confirm(&app, format!("发现新版本 {}（当前 {}），是否立即下载并安装？",
+                update.version, update.current_version)).await {
+            return Ok(());
+        }
+        // Windows: verifies the minisign signature, runs the installer and
+        // exits this process; request_restart then relaunches the new build.
+        update.download_and_install(|_, _| (), || ()).await
+            .map_err(|e| format!("下载或安装更新失败：{e}"))?;
+        app.request_restart();
+        Ok(())
+    }.await;
+    UPDATE_CHECKING.store(false, Ordering::SeqCst);
+    if let Err(message) = outcome {
+        if manual { notice(&app, message); }
+    }
+}
+
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| reveal(app, None)))
         .invoke_handler(tauri::generate_handler![service::service_request, service::service_cancel, service::service_ack,
             service::service_download, service::save_document, open_external])
@@ -98,8 +149,9 @@ fn main() {
             let scan = MenuItem::with_id(app, "scan", "增量扫描", true, None::<&str>)?;
             let cancel = MenuItem::with_id(app, "cancel", "取消扫描", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
+            let update = MenuItem::with_id(app, "update", "检查更新…", true, None::<&str>)?;
             let exit = MenuItem::with_id(app, "exit", "退出 TokenLens", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &scan, &cancel, &settings, &exit])?;
+            let menu = Menu::with_items(app, &[&show, &scan, &cancel, &settings, &update, &exit])?;
             TrayIconBuilder::new().icon(app.default_window_icon().expect("bundled icon").clone())
                 .tooltip("TokenLens").menu(&menu).show_menu_on_left_click(false)
                 .on_tray_icon_event(|tray, event| {
@@ -110,6 +162,10 @@ fn main() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => reveal(app, None),
                     "settings" => reveal(app, Some("settings")),
+                    "update" => {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn(async move { run_update_check(app, true).await; });
+                    }
                     "exit" => app.exit(0),
                     "scan" | "cancel" => {
                         let app = app.clone();
@@ -122,6 +178,12 @@ fn main() {
                     _ => {}
                 }).build(app)?;
             Service::supervise(app.handle().clone());
+            // Silent startup check; a found update still asks before installing.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                run_update_check(handle, false).await;
+            });
             Ok(())
         }).build(tauri::generate_context!()).expect("TokenLens could not start");
     app.run(|app, event| {
