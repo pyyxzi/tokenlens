@@ -53,6 +53,15 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Provide placeholder sidecar binary
+        # tauri-build validates that the externalBin resource exists even for
+        # cargo check; the real sidecar is built by build.ps1 / release.yml.
+        working-directory: src-tauri
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path binaries | Out-Null
+          Set-Content -Path 'binaries\tokenlens-service-x86_64-pc-windows-msvc.exe' -Value 'ci placeholder'
+
       - name: Cargo check the Tauri host
         working-directory: src-tauri
         run: cargo check --locked
