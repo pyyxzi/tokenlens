@@ -2,6 +2,7 @@
 mod service;
 
 use tauri::{Emitter, Manager, menu::{Menu, MenuItem}, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}, webview::NewWindowResponse};
+use tauri_plugin_dialog::DialogExt;
 use service::Service;
 
 fn external_url(value: &str) -> Result<String, String> {
@@ -75,38 +76,35 @@ async fn confirm(app: &tauri::AppHandle, message: String) -> bool {
 // One update flow at a time; failures only surface when the user asked for them.
 async fn run_update_check(app: tauri::AppHandle, manual: bool) {
     use std::sync::atomic::Ordering;
-    use tauri_plugin_process::ProcessExt;
     use tauri_plugin_updater::UpdaterExt;
     if UPDATE_CHECKING.swap(true, Ordering::SeqCst) { return; }
     let outcome = async {
         let updater = app.updater().map_err(|e| format!("更新组件不可用：{e}"))?;
-        let Some(mut update) = updater.check().await
+        let Some(update) = updater.check().await
             .map_err(|e| format!("检查更新失败：{e}"))?
-            .ok_or_else(|| String::new())?;
+        else {
+            if manual { notice(&app, "当前已是最新版本。".into()); }
+            return Ok(());
+        };
         if !confirm(&app, format!("发现新版本 {}（当前 {}），是否立即下载并安装？",
                 update.version, update.current_version)).await {
             return Ok(());
         }
+        // Windows: verifies the minisign signature, runs the installer and
+        // exits this process; request_restart then relaunches the new build.
         update.download_and_install(|_, _| (), || ()).await
             .map_err(|e| format!("下载或安装更新失败：{e}"))?;
-        app.restart()
+        app.request_restart()
     }.await;
     UPDATE_CHECKING.store(false, Ordering::SeqCst);
-    match outcome {
-        Ok(()) => {}
-        Err(message) if message.is_empty() => {
-            if manual { notice(&app, "当前已是最新版本。".into()); }
-        }
-        Err(message) => {
-            if manual { notice(&app, message); }
-        }
+    if let Err(message) = outcome {
+        if manual { notice(&app, message); }
     }
 }
 
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| reveal(app, None)))
         .invoke_handler(tauri::generate_handler![service::service_request, service::service_cancel, service::service_ack,
