@@ -12,7 +12,7 @@ import copy
 
 APP_NAME = "TokenLens"
 APP_TAGLINE = "LOCAL TOKEN ANALYTICS"
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.2.0"
 
 HOME = os.path.expanduser("~")
 _LOG = logging.getLogger("tokenlens.config")

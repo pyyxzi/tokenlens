@@ -1,1 +1,1 @@
-{"identifier":"main","description":"Local workbench event subscriptions only","windows":["main"],"permissions":["core:event:allow-listen","core:event:allow-unlisten"]}
+{"identifier":"main","description":"Local workbench event subscriptions only","windows":["main"],"permissions":["core:event:allow-listen","core:event:allow-unlisten","updater:default","process:allow-restart"]}

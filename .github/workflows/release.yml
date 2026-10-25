@@ -1,8 +1,9 @@
 name: Release build
 
 # Builds the Windows x64 installer and portable archive on tag push and
-# attaches them to a GitHub Release. Manual dispatch is enabled so a build
-# can be produced before tagging.
+# attaches them to a GitHub Release. The installer is minisign-signed for
+# the in-app updater (see src-tauri/tauri.conf.json plugins.updater).
+# Manual dispatch is enabled so a build can be produced before tagging.
 on:
   push:
     tags: ["v*"]
@@ -15,6 +16,8 @@ jobs:
   windows:
     name: Windows x64 bundle
     runs-on: windows-latest
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -36,12 +39,31 @@ jobs:
         run: |
           .\build.ps1 -Python (Get-Command python).Source -WorkDir 'D:\tokenlens-build'
 
-      - name: Collect artifacts
+      - name: Collect artifacts and build updater manifest
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          Copy-Item 'D:\tokenlens-build\target\x86_64-pc-windows-msvc\release\bundle\nsis\*-setup.exe' artifacts\
+          $nsis = 'D:\tokenlens-build\target\x86_64-pc-windows-msvc\release\bundle\nsis'
+          Copy-Item "$nsis\*-setup.exe" artifacts\
+          Copy-Item "$nsis\*-setup.exe.sig" artifacts\
           Compress-Archive -Path 'D:\tokenlens-build\portable\*' -DestinationPath artifacts\TokenLens-${{ github.ref_name }}-portable-windows-x64.zip
+          $setup = Get-ChildItem artifacts\*-setup.exe | Select-Object -First 1
+          $version = $setup.Name -replace '^TokenLens_', '' -replace '_x64-setup\.exe$', ''
+          $signature = (Get-Content "$($setup.FullName).sig" -Raw).Trim()
+          $manifest = @{
+            version = $version
+            notes = "TokenLens ${{ github.ref_name }}. See the release page for details."
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = @{
+              "windows-x86_64" = @{
+                signature = $signature
+                url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($setup.Name)"
+              }
+            }
+          } | ConvertTo-Json -Depth 5
+          # Keep the file on one line: the updater accepts any JSON, but a
+          # single line avoids Windows newline quirks in some proxies.
+          ($manifest -replace '\r?\n', ' ') | Set-Content -NoNewline -Path artifacts\latest.json
           Get-ChildItem artifacts
 
       - uses: actions/upload-artifact@v4
