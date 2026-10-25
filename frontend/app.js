@@ -3080,7 +3080,7 @@
     set('#aboutRuntimeValue', 'Tauri 桌面 · 本地统计', 'Tauri desktop · local analytics');
     set('#aboutScopeLabel', '数据范围', 'Data scope');
     set('#aboutScopeValue', '本机日志与导入数据', 'Local logs and imported data');
-    $('#aboutVersionValue').textContent = 'v'+(S.boot?.version || '1.2.0');
+    $('#aboutVersionValue').textContent = 'v'+(S.boot?.version || '1.2.1');
     set('#aboutVersionLabel', '版本', 'Version');
     set('#aboutAuthorLabel', '作者', 'Author');
     set('#aboutCopy', 'TokenLens 汇总本机和导入的 AI 用量，支持费用核对、分页明细与三项并行 AI 任务。'
