@@ -15,7 +15,7 @@ const GET_PATHS: &[&str] = &["/api/ai-settings","/api/ai-thinking","/api/assista
  "/api/assistant/report","/api/ccswitch/connections","/api/backup/export","/api/bootstrap","/api/dashboard",
  "/api/summary","/api/sources","/api/rankings","/api/records","/api/session","/api/prompt","/api/tasks",
  "/api/finance","/api/manage","/api/diagnostics","/api/scan/status","/api/scan/stream","/api/export",
- "/api/export-stream","/api/ping","/api/prices/list","/api/desktop/status","/api/ledger"];
+ "/api/export-stream","/api/ping","/api/prices/list","/api/desktop/status","/api/ledger","/api/budget"];
 const POST_PATHS: &[&str] = &["/api/desktop/show","/api/desktop/hide","/api/ai-settings/check","/api/ai-settings/save",
  "/api/ai-settings/models","/api/assistant/models","/api/assistant/prices/confirm","/api/assistant/report/delete",
  "/api/assistant/prices/restore","/api/assistant/stream","/api/ccswitch/models","/api/backup/export",
@@ -24,7 +24,7 @@ const POST_PATHS: &[&str] = &["/api/desktop/show","/api/desktop/hide","/api/ai-s
  "/api/prompt/save","/api/prompt/select","/api/prompt/delete","/api/prompt/optimize","/api/ai-test",
  "/api/ai-availability","/api/prompt/optimize-stream","/api/ai-test-stream","/api/prompt/clear","/api/reset",
  "/api/pick-folder","/api/shutdown","/api/sources/import/preview","/api/sources/import/commit",
- "/api/sources/import/discard"];
+ "/api/sources/import/discard","/api/sources/reveal"];
 
 pub struct Service {
     home: PathBuf, runtime: Mutex<Option<Runtime>>, recovery: Arc<tokio::sync::Mutex<()>>,

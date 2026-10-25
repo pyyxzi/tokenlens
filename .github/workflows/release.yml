@@ -52,7 +52,7 @@ jobs:
           $signature = (Get-Content "$($setup.FullName).sig" -Raw).Trim()
           $manifest = @{
             version = $version
-            notes = "TokenLens ${{ github.ref_name }}. See the release page for details."
+            notes = "TokenLens ${{ github.ref_name }} - full changelog: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
             pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
             platforms = @{
               "windows-x86_64" = @{

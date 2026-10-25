@@ -13,6 +13,7 @@ import os
 import re
 import math
 import socket
+import sys
 import threading
 import time
 import urllib.parse
@@ -873,6 +874,12 @@ def make_handler(app: App):
                 })
             if path == "/api/dashboard":
                 return self.json_out(app.dashboard(rng, q.get("tool")))
+            if path == "/api/budget":
+                # Light endpoint for the tray monitor: period usage vs budget
+                # without pulling the whole dashboard.
+                with export_snapshot(app.store) as snapshot:
+                    agg = query_aggregator(snapshot, app.cfg, request_filters(q))
+                    return self.json_out({"ok": True, "budget": agg.budget("month", app.cfg)})
             if path == "/api/summary":
                 filters = request_filters(q, rng)
                 with export_snapshot(app.store) as snapshot:
@@ -1173,6 +1180,23 @@ def make_handler(app: App):
                     "profile_id": profile_id, "protocol": protocol}
 
         def api_post(self, path, q, body):
+            if path == "/api/sources/reveal":
+                # Open the tool's local data directory in Explorer. The path
+                # comes from the adapter's own probe(), never from the request.
+                sid = str(body.get("id") or "")
+                if not re.match(r"^[a-z0-9_-]{1,64}$", sid):
+                    raise RequestError("invalid source id", 400)
+                for ad in app.scanner.adapters:
+                    if ad.id != sid:
+                        continue
+                    found, location = ad.probe()
+                    if not found or not location or not os.path.isdir(location):
+                        return self.json_out({"ok": False, "error": "not installed"}, 404)
+                    if sys.platform != "win32":
+                        return self.json_out({"ok": False, "error": "unsupported platform"}, 400)
+                    os.startfile(location)  # noqa: S606 - local dir from our own adapter
+                    return self.json_out({"ok": True})
+                return self.json_out({"ok": False, "error": "unknown source"}, 404)
             if path in ("/api/desktop/show", "/api/desktop/hide"):
                 desktop = getattr(app, "desktop", None)
                 if desktop is None:
