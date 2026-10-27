@@ -1,6 +1,6 @@
 {
   "name": "tokenlens",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "private": true,
   "devDependencies": {
     "@tauri-apps/cli": "2.12.2"

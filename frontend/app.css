@@ -733,7 +733,8 @@ button.lg-edit:focus-visible{outline:2px solid var(--accent);outline-offset:2px;
 .tbl#recordTable tbody tr{content-visibility:auto;contain-intrinsic-size:38px;contain:layout style paint}
 .tbl#recordTable{table-layout:fixed}
 .tbl#recordTable td.num{font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis}
-.view[data-view="records"] .table-wrap{height:clamp(240px,calc(100vh - 300px),720px);contain:strict;overscroll-behavior:contain}
+/* 流水表格随整页滚动；不要在这里造内部滚动盒——固定高度加上
+   overscroll-behavior:contain 会把表格上的滚轮事件整个吞掉。 */
 .view[data-view="records"] .table-wrap::-webkit-scrollbar{height:9px;width:9px}
 @media(max-width:720px){.rec-filter{justify-content:flex-start}.rec-columns-pop{left:0;right:auto}.rec-filter .input.sm{max-width:145px}}
 
