@@ -29,6 +29,7 @@ If you use several AI tools — Claude Code, Codex CLI, Gemini CLI, Cursor, Copi
 TokenLens does that once, properly:
 
 - **One unified ledger.** 25+ data sources normalized into a single schema: input / output / cache-read / cache-write / reasoning tokens, per call, with stable event IDs so rescans stay idempotent.
+- **Cache efficiency at every level.** Input token cache hit rate appears in the overview, tool/model/project/session views, records and reports, with average tokens per call where applicable. Cache hit rate is cache-read tokens divided by all input tokens (uncached + cache read + cache write), computed after aggregation; no input data is shown as N/A.
 - **Cost you can reason about.** Public per-model price tables plus your own manual prices produce USD estimates; provider-reported actuals are kept when the source exposes them. Subscription-only sources are labeled honestly instead of being mislabeled as dollars.
 - **Local-first privacy.** Everything runs on your machine and lands in a local SQLite database. API keys for the optional AI assistant are protected with Windows DPAPI. No telemetry, no cloud dashboard.
 - **Built for big histories.** Incremental scanning (unchanged files are skipped by fingerprint), paginated drill-downs, background aggregation — validated against a 300k-record, ~260 MiB database.

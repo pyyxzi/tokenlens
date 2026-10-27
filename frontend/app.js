@@ -963,12 +963,13 @@
     const kpis = [
       { label: en ? 'Total tokens' : '总 Token 消耗', val: s.total, format: (v) => metric(v), glow: ROLE.total(),
         sub: `<span>${en ? 'Exact' : '精确'} ${fmtExact(s.total)}</span>` },
-      { label: en ? 'Daily average' : '日均消耗', val: s.avg_per_day, format: (v) => metric(v), glow: ROLE.output(),
-        sub: `<span>${en ? `Active ${s.active_days} days` : `活跃 ${s.active_days} 天`}</span><span>·</span><span>${fmtExact(s.avg_per_request)}${en ? ' / call' : ' / 次'}</span>` },
+      { label: en ? 'Input cache hit rate' : '输入缓存命中率', val: (window.TLUsage.cacheRatio(s) || 0) * 100,
+        format: v => window.TLUsage.cacheRatio(s) === null ? (en ? 'N/A' : '—') : v.toFixed(1) + '<span class="unit">%</span>', glow: ROLE.cRead(),
+        sub: `<span title="${esc(window.TLUsage.cacheTitle(s, en))}">${en ? 'Cache read / all input' : '缓存读 / 全部输入'}</span><span>·</span><span>${fmt(s.cache_read)} ${en ? 'read' : '缓存读'}</span>` },
       { label: en ? 'Model calls' : '模型调用次数', val: s.requests, format: (v) => metric(v, en ? '' : '次'), glow: ROLE.input(),
-        sub: `<span>${en ? `${s.sessions} sessions` : `${s.sessions} 个会话`}</span><span>·</span><span>${en ? `${s.models} models` : `${s.models} 个模型`}</span>` },
-      { label: en ? 'Recorded cost' : '记录费用', val: s.cost, format: (v) => money(v, rate), glow: ROLE.cRead(),
-        sub: `<span>${en?'Actual':'实付'} ${money(s.actual_cost || 0,rate)} / ${en?'Estimated':'估算'} ${money(s.estimated_cost || 0,rate)}</span><span>·</span><span>${s.unknown_records==null?(en?'See cost coverage in Cost management':'完整性见成本管理'):window.TLMoney?.coverage(s) || ''}</span>` },
+        sub: `<span>${en ? `${s.sessions} sessions` : `${s.sessions} 个会话`}</span><span>·</span><span title="${en ? 'Average tokens per call' : '平均每次调用的 Token 用量'}">${averageLabel(s)}${en ? ' / call' : ' / 次'}</span>` },
+      { label: en ? 'Recorded cost' : '记录费用', val: s.cost, format: (v) => displayMoney(v), glow: ROLE.cRead(),
+        sub: `<span title="${esc(money(s.cost, rate))}">${en?'Actual':'实付'} ${displayMoney(s.actual_cost || 0)} / ${en?'Estimated':'估算'} ${displayMoney(s.estimated_cost || 0)}</span><span>·</span><span>${s.unknown_records==null?(en?'See cost coverage in Cost management':'完整性见成本管理'):window.TLMoney?.coverage(s) || ''}</span>` },
     ];
     const countUp = motionEnabled();
     const kpiHost = $('#kpis'); kpiHost.innerHTML = '';
@@ -1428,19 +1429,20 @@
           </div>
           ${sparkline(vals, accent)}
         </div>
-        <div class="tool-total">${fmt(t.total)}<span class="unit">tokens</span></div>
+        <div class="tool-total" title="${fmtExact(t.total)} tokens">${fmt(t.total)}<span class="unit">tokens</span></div>
+        <div class="tool-cache-note">${isEn() ? 'Cache read' : '缓存读'} <b title="${fmtExact(t.cache_read)}">${fmt(t.cache_read)}</b><span>·</span>${isEn() ? 'Write' : '缓存写'} <b title="${fmtExact(t.cache_write)}">${fmt(t.cache_write)}</b></div>
         <div class="tool-meta">
           <div>${isEn() ? 'Input' : '输入'}<b>${fmt(t.input)}</b></div>
           <div>${isEn() ? 'Output' : '输出'}<b>${fmt(t.output)}</b></div>
-          <div>${isEn() ? 'Cache read' : '缓存读'}<b>${fmt(t.cache_read)}</b></div>
+          <div title="${esc(window.TLUsage.cacheTitle(t, isEn()))}">${isEn() ? 'Cache hit rate' : '缓存命中率'}<b class="metric-cache">${window.TLUsage.cacheLabel(t, isEn())}</b></div>
         </div>
         <div class="tool-meta" style="margin-top:9px">
           <div>${isEn() ? 'Calls' : '调用'}<b>${fmtExact(t.requests)}</b></div>
           <div>${isEn() ? 'Sessions' : '会话'}<b>${fmtExact(t.sessions)}</b></div>
-          <div>${isEn() ? 'Recorded cost' : '记录费用'}<b>${money(t.cost, rate)}</b></div>
+          <div title="${esc(money(t.cost, rate))}">${isEn() ? 'Recorded cost' : '记录费用'}<b>${displayMoney(t.cost)}</b></div>
         </div>
         <div class="tool-foot">
-          <span>${isEn() ? 'share ' : '占比 '}${t.share.toFixed(2)}%</span>
+          <span title="${isEn() ? 'Average tokens per call' : '平均每次调用的 Token 用量'}">${averageLabel(t)} / ${isEn() ? 'call' : '次'}</span>
           <span class="chip"><span class="sw" style="background:${t.color}"></span>${isEn() ? `${t.models} models` : `${t.models} 个模型`}</span>
           <span class="go" style="color:var(--accent);font-weight:600">${isEn() ? 'View records →' : '查看流水 →'}</span>
         </div>`;
@@ -1458,6 +1460,40 @@
      表格
      ====================================================================== */
   const tablePages = new Map();
+  const displayMoney = value => {
+    const currency = window.TLMoney?.currency() || (isEn() ? 'USD' : 'CNY');
+    const displayed = Number(value) * (currency === 'CNY' ? Number(S.data?.config?.usd_to_cny || 7.2) : 1);
+    return window.TLMoney?.format(value, {precision: displayed > 0 && displayed < 0.01 ? 6 : 2}) ?? money(value);
+  };
+  const averageLabel = row => {
+    const value = window.TLUsage.averageTokens(row);
+    return value == null ? '—' : fmtExact(Math.round(value));
+  };
+  function cacheCell(row, detail = true) {
+    const ratio = window.TLUsage.cacheRatio(row);
+    return `<span class="cache-metric${ratio === null ? ' is-unavailable' : ''}" title="${esc(window.TLUsage.cacheTitle(row, isEn()))}">
+      <b>${window.TLUsage.cacheLabel(row, isEn())}</b>
+      <span class="cache-track" aria-hidden="true"><i style="width:${ratio === null ? 0 : (ratio * 100).toFixed(2)}%"></i></span>
+      ${detail ? `<small>${isEn() ? 'Read' : '缓存读'} ${fmtExact(row.cache_read || 0)}</small>` : ''}</span>`;
+  }
+  function identityPath(value, fallback) {
+    const full = String(value || fallback || (isEn() ? 'Unassigned' : '未标注项目'));
+    const clean = full.replace(/\\/g, '/').replace(/\/$/, '');
+    const name = clean.split('/').filter(Boolean).pop() || full;
+    return `<span class="data-identity" title="${esc(full)}"><b>${esc(name)}</b>${full !== name ? `<small>${esc(full)}</small>` : ''}</span>`;
+  }
+  function toolNames(values) {
+    return (values || []).map(key => toolName(S.data?.tool_meta?.[key], key)).join(' · ');
+  }
+  function renderScopeMetrics(table, caption) {
+    let host = document.getElementById(table.id + 'Metrics');
+    if (!host) { host = el('div', 'scope-metrics'); host.id = table.id + 'Metrics'; table.parentElement.before(host); }
+    const s = S.data?.summary || {};
+    host.innerHTML = `<span class="scope-metrics-label">${caption}</span>
+      <span>${isEn() ? 'Input tokens' : '全部输入'} <b title="${fmtExact(window.TLUsage.inputTotal(s) || 0)}">${fmt(window.TLUsage.inputTotal(s) || 0)}</b></span>
+      <span title="${esc(window.TLUsage.cacheTitle(s, isEn()))}">${isEn() ? 'Cache hit rate' : '缓存命中率'} <b>${window.TLUsage.cacheLabel(s, isEn())}</b></span>
+      <span>${isEn() ? 'Tokens / call' : '均次消耗'} <b>${averageLabel(s)}</b></span>`;
+  }
 
   function tablePage(key) {
     const scope = S.range + ':' + ((S.data || {}).tool || '');
@@ -1582,38 +1618,35 @@
 
   async function renderModelTable() {
     const page = await rankingPage('models'); if (!page) return;
-    const D = S.data, rate = D.config.usd_to_cny;
-    const t = $('#modelTable');
-    const max = D.models.reduce((value, model) => Math.max(value, model.total), 1);
-    const shown = page.rows;
-    let html = `<thead><tr>
-      <th>${isEn() ? 'Model' : '模型'}</th><th class="num">${isEn() ? 'Total tokens' : 'Token 合计'}</th>
-      <th class="num">${isEn() ? 'Input' : '输入'}</th><th class="num">${isEn() ? 'Output' : '输出'}</th>
-      <th class="num">${isEn() ? 'Cache read' : '缓存读'}</th><th class="num">${isEn() ? 'Calls' : '调用'}</th>
-      <th class="num" title="${isEn() ? 'Known costs only; unpriced records are excluded.' : '仅含已计价金额，未定价记录不计入。'}">${isEn() ? 'Known cost' : '已计价费用'}</th>
-      <th style="width:130px">${isEn() ? 'Share' : '占比'}</th>
-      <th>${isEn() ? 'Source tools' : '来源工具'}</th><th>${isEn()?'Actions':'操作'}</th></tr></thead><tbody>`;
-    shown.forEach((m,i) => {
+    const t = $('#modelTable'), shown = page.rows;
+    t.classList.add('data-table', 'model-ranking');
+    let html = `<colgroup><col style="width:23%"><col style="width:14%"><col style="width:13%"><col style="width:13%"><col style="width:10%"><col style="width:12%"><col style="width:15%"></colgroup>
+      <thead><tr><th>${isEn() ? 'Model / tools' : '模型 / 工具'}</th>
+        <th class="num">${isEn() ? 'Tokens / share' : '用量 / 占比'}</th>
+        <th class="num">${isEn() ? 'Input / output' : '输入 / 输出'}</th>
+        <th class="num" title="${esc(window.TLUsage.cacheTitle({input_total:1, cache_read:0}, isEn()))}">${isEn() ? 'Cache hit rate' : '缓存命中率'}</th>
+        <th class="num">${isEn() ? 'Known cost' : '已计价费用'}</th>
+        <th class="num">${isEn() ? 'Calls' : '调用'}<small>${isEn() ? 'Avg tokens / call' : '均次消耗'}</small></th>
+        <th class="cell-actions">${isEn() ? 'Actions' : '操作'}</th></tr></thead><tbody>`;
+    shown.forEach((m, i) => {
       html += `<tr>
-        <td class="ell"><b>${esc(m.model)}</b></td>
-        <td class="num">${fmtExact(m.total)}</td>
-        <td class="num mut">${fmtExact(m.input)}</td>
-        <td class="num mut">${fmtExact(m.output)}</td>
-        <td class="num mut">${fmtExact(m.cache_read)}</td>
-        <td class="num mut">${fmtExact(m.requests)}</td>
-        <td class="num">${money(m.cost, rate)}</td>
-        <td><div class="bar-mini"><i style="width:${(m.total / max) * 100}%;background:linear-gradient(90deg,${ROLE.total()},${ROLE.output()})"></i></div>
-            <span class="mut" style="font-size:10.5px">${m.share.toFixed(2)}%</span></td>
-        <td class="ell mut">${esc((m.tool_list || []).join(', '))}</td><td>${contextRowActions('model',i)}</td></tr>`;
+        <td class="cell-identity"><span class="data-identity" title="${esc(m.model)}"><b>${esc(m.model)}</b><small>${esc(toolNames(m.tool_list))}</small></span></td>
+        <td class="num"><strong>${fmtExact(m.total)}</strong><small class="share-caption">${Number(m.share || 0).toFixed(2)}% <i style="--share:${Math.min(100, m.share || 0)}%"></i></small></td>
+        <td class="num"><span class="data-pair"><b>${fmtExact(m.input)}</b><small>${isEn() ? 'Out' : '输出'} ${fmtExact(m.output)}</small></span></td>
+        <td class="num">${cacheCell(m)}</td>
+        <td class="num" title="${esc(money(m.cost))}">${displayMoney(m.cost)}</td>
+        <td class="num"><span class="data-pair"><b>${fmtExact(m.requests)}</b><small title="${isEn() ? 'Average tokens per call' : '平均每次调用的 Token 用量'}">${averageLabel(m)} / ${isEn() ? 'call' : '次'}</small></span></td>
+        <td class="cell-actions">${contextRowActions('model', i)}</td></tr>`;
     });
-    if (!shown.length) html += `<tr><td colspan="10" class="mut">${isEn() ? 'No models in this date range.' : '当前时间范围内没有模型用量。'}</td></tr>`;
+    if (!shown.length) html += `<tr><td colspan="7" class="mut">${isEn() ? 'No models in this date range.' : '当前时间范围内没有模型用量。'}</td></tr>`;
     t.innerHTML = html + '</tbody>';
-    bindContextRowActions(t,shown,'model');
+    renderScopeMetrics(t, isEn() ? 'Selected scope' : '当前范围');
+    bindContextRowActions(t, shown, 'model');
     mountTablePagers(t, page, page.total, shown.length, renderModelTable);
   }
 
   function contextRowActions(kind,index) {
-    return `<div class="row-context-actions"><button type="button" class="btn btn-ghost btn-xs" data-context-row="${index}" data-context-target="records">${isEn()?'View records':'查看明细'}</button>`+
+    return `<div class="row-context-actions"><button type="button" class="btn btn-ghost btn-xs" data-context-row="${index}" data-context-target="records">${isEn()?'Records':'查看明细'}</button>`+
       (featureEnabled('nav_assistant')?`<button type="button" class="btn btn-ghost btn-xs" data-context-row="${index}" data-context-target="assistant">${isEn()?'Analyze':'分析'}</button>`:'')+'</div>';
   }
   function bindContextRowActions(table, rows, kind) {
@@ -1632,6 +1665,7 @@
   async function renderLedger() {
     const D = S.data, t = $('#ledgerTable');
     if (!t) return;
+    t.classList.add('data-table', 'ledger-data-table');
     const page = tablePage('ledger'), epoch = S.epoch;
     let L = D.ledger;
     const total = Number(L?.total ?? L?.items?.length ?? 0);
@@ -1728,7 +1762,7 @@
         <td><button class="lg-edit" data-model="${esc(it.model)}" title="${isEn()
             ? 'Edit unit price for this model'
             : '编辑该模型的单价'}"><b>${esc(it.model)}</b></button>${warn}
-          <div class="lg-total">${isEn() ? 'Total' : '合计'} ${fmtExact(it.tokens)} tokens</div></td>
+          <div class="lg-total">${isEn() ? 'Total' : '合计'} ${fmtExact(it.tokens)} tokens</div><small class="ledger-cache" title="${esc(window.TLUsage.cacheTitle(b, isEn()))}">${isEn() ? 'Cache hit' : '缓存命中'} ${window.TLUsage.cacheLabel(b, isEn())}</small></td>
         <td class="num mut">${fmtExact(it.requests)}</td>
         <td class="num"><span class="lg-p">${pv(p.input)}</span><span class="lg-x">×</span>
           <span class="mut">${fmtExact(b.input)}</span><span class="lg-eq">=</span>
@@ -1919,31 +1953,30 @@
 
   async function renderProjectTable() {
     const page = await rankingPage('projects'); if (!page) return;
-    const D = S.data, t = $('#projectTable');
-    const max = D.projects.reduce((value, project) => Math.max(value, project.total), 1);
-    const shown = page.rows;
-    let html = `<thead><tr><th>${isEn() ? 'Project directory' : '项目目录'}</th>
-      <th class="num">${isEn() ? 'Total tokens' : 'Token 合计'}</th><th class="num">${isEn() ? 'Input' : '输入'}</th>
-      <th class="num">${isEn() ? 'Output' : '输出'}</th><th class="num" title="${isEn() ? 'Known costs only; unpriced records are excluded.' : '仅含已计价金额，未定价记录不计入。'}">${isEn() ? 'Known cost' : '已计价费用'}</th>
-      <th class="num">${isEn() ? 'Sessions' : '会话'}</th>
-      <th style="width:130px">${isEn() ? 'Share' : '占比'}</th><th>${isEn() ? 'Tools' : '工具'}</th>
-      <th>${isEn() ? 'Last active' : '最近活跃'}</th><th>${isEn()?'Actions':'操作'}</th></tr></thead><tbody>`;
-    shown.forEach((p,i) => {
+    const t = $('#projectTable'), shown = page.rows;
+    t.classList.add('data-table', 'project-ranking');
+    let html = `<colgroup><col style="width:23%"><col style="width:14%"><col style="width:13%"><col style="width:13%"><col style="width:10%"><col style="width:12%"><col style="width:15%"></colgroup>
+      <thead><tr><th>${isEn() ? 'Project / directory' : '项目 / 目录'}</th>
+        <th class="num">${isEn() ? 'Tokens / share' : '用量 / 占比'}</th>
+        <th class="num">${isEn() ? 'Input / output' : '输入 / 输出'}</th>
+        <th class="num">${isEn() ? 'Cache hit rate' : '缓存命中率'}</th>
+        <th class="num" title="${isEn() ? 'Known costs only; unpriced records are excluded.' : '仅含已计价金额，未定价记录不计入。'}">${isEn() ? 'Known cost' : '已计价费用'}</th>
+        <th class="num">${isEn() ? 'Sessions' : '会话'}<small>${isEn() ? 'Last active' : '最近活跃'}</small></th>
+        <th class="cell-actions">${isEn() ? 'Actions' : '操作'}</th></tr></thead><tbody>`;
+    shown.forEach((p, i) => {
       html += `<tr>
-        <td class="ell"><b>${esc(p.project)}</b></td>
-        <td class="num">${fmtExact(p.total)}</td>
-        <td class="num mut">${fmtExact(p.input)}</td>
-        <td class="num mut">${fmtExact(p.output)}</td>
-        <td class="num">${money(p.cost, D.config.usd_to_cny)}</td>
-        <td class="num mut">${p.sessions}</td>
-        <td><div class="bar-mini"><i style="width:${(p.total / max) * 100}%;background:linear-gradient(90deg,${ROLE.input()},${ROLE.cRead()})"></i></div>
-            <span class="mut" style="font-size:10.5px">${p.share.toFixed(2)}%</span></td>
-        <td class="ell mut">${esc((p.tool_list || []).join(', '))}</td>
-        <td class="mut">${dd(p.last_ts)}</td><td>${contextRowActions('project',i)}</td></tr>`;
+        <td class="cell-identity">${identityPath(p.project)}<small class="identity-tools" title="${esc(toolNames(p.tool_list))}">${esc(toolNames(p.tool_list))}</small></td>
+        <td class="num"><strong>${fmtExact(p.total)}</strong><small class="share-caption">${Number(p.share || 0).toFixed(2)}% <i style="--share:${Math.min(100, p.share || 0)}%"></i></small></td>
+        <td class="num"><span class="data-pair"><b>${fmtExact(p.input)}</b><small>${isEn() ? 'Out' : '输出'} ${fmtExact(p.output)}</small></span></td>
+        <td class="num">${cacheCell(p)}</td>
+        <td class="num" title="${esc(money(p.cost))}">${displayMoney(p.cost)}</td>
+        <td class="num"><span class="data-pair"><b>${fmtExact(p.sessions)} ${isEn() ? 'sessions' : '会话'}</b><small>${dd(p.last_ts)}</small></span></td>
+        <td class="cell-actions">${contextRowActions('project', i)}</td></tr>`;
     });
-    if (!shown.length) html += `<tr><td colspan="10" class="mut">${isEn() ? 'No projects in this date range.' : '当前时间范围内没有项目用量。'}</td></tr>`;
+    if (!shown.length) html += `<tr><td colspan="7" class="mut">${isEn() ? 'No projects in this date range.' : '当前时间范围内没有项目用量。'}</td></tr>`;
     t.innerHTML = html + '</tbody>';
-    bindContextRowActions(t,shown,'project');
+    renderScopeMetrics(t, isEn() ? 'Selected scope' : '当前范围');
+    bindContextRowActions(t, shown, 'project');
     mountTablePagers(t, page, page.total, shown.length, renderProjectTable);
   }
 
@@ -1951,10 +1984,10 @@
     const page = await rankingPage('sessions'); if (!page) return;
     const D = S.data, t = $('#sessionTable');
     const meta = D.tool_meta || {};
-    t.classList.add('sessions-table');
-    let html=`<colgroup><col style="width:25%"><col style="width:26%"><col style="width:24%"><col style="width:15%"><col style="width:10%"></colgroup><thead><tr>
+    t.classList.add('sessions-table', 'data-table');
+    let html=`<colgroup><col style="width:24%"><col style="width:23%"><col style="width:24%"><col style="width:18%"><col style="width:11%"></colgroup><thead><tr>
       <th>${isEn()?'Session / tool / models':'会话 / 工具 / 模型'}</th><th>${isEn()?'Project':'项目'}</th>
-      <th>${isEn()?'Usage breakdown':'用量拆分'}</th><th title="${isEn() ? 'Known costs only; unpriced records are excluded.' : '仅含已计价金额，未定价记录不计入。'}">${isEn()?'Total / known cost':'合计 / 已计价费用'}</th>
+      <th>${isEn()?'Usage / cache':'用量 / 缓存'}</th><th title="${isEn() ? 'Known costs only; unpriced records are excluded.' : '仅含已计价金额，未定价记录不计入。'}">${isEn()?'Total / known cost':'合计 / 已计价费用'}</th>
       <th>${isEn()?'Date range':'起止日期'}</th></tr></thead><tbody>`;
     page.rows.forEach((s, i) => {
       const m = meta[s.tool] || {};
@@ -1963,13 +1996,14 @@
       html+=`<tr class="clickable" tabindex="0" data-session-index="${i}" title="${isEn()?'Open session details':'查看会话详情'}">
         <td class="session-identity"><code>${esc(s.session || '—')}</code><span class="chip"><span class="sw" style="background:${m.color || ROLE.total()}"></span>${esc(toolName(m,s.tool))}</span>
           <div class="session-models" data-no-countup>${esc((s.model_list || '').split(',').filter(Boolean).join(' · '))}</div></td>
-        <td class="session-project">${esc(s.project || '—')}</td>
-        <td class="session-usage"><div>${fields.map(([key,label])=>`<span class="session-metric"><span>${label}</span><b data-countup>${fmtExact(s[key])}</b></span>`).join('')}</div></td>
-        <td class="session-totals"><strong data-countup>${fmtExact(s.total)}</strong><span data-countup>${money(s.cost,D.config.usd_to_cny)}</span></td>
+        <td class="session-project">${identityPath(s.project)}</td>
+        <td class="session-usage"><div>${fields.map(([key,label])=>`<span class="session-metric"><span>${label}</span><b data-countup>${fmtExact(s[key])}</b></span>`).join('')}</div><span class="inline-cache" title="${esc(window.TLUsage.cacheTitle(s, isEn()))}">${isEn() ? 'Cache hit' : '缓存命中'} <b>${window.TLUsage.cacheLabel(s, isEn())}</b><small>${averageLabel(s)} / ${isEn() ? 'call' : '次'}</small></span></td>
+        <td class="session-totals"><strong data-countup>${fmtExact(s.total)}</strong><span title="${esc(money(s.cost))}" data-countup>${displayMoney(s.cost)}</span></td>
         <td class="session-window" data-no-countup><time>${esc(s.start_day)}</time><span>→</span><time>${esc(s.end_day)}</time></td></tr>`;
     });
     if (!page.rows.length) html += `<tr><td colspan="5" class="mut">${isEn() ? 'No sessions in this date range.' : '当前时间范围内没有会话用量。'}</td></tr>`;
     t.innerHTML = html + '</tbody>';
+    renderScopeMetrics(t, isEn() ? 'Selected scope' : '当前范围');
     const open=(event)=>{const row=event.target.closest('tr[data-session-index]');const s=row && page.rows[Number(row.dataset.sessionIndex)];if(s)openSession(s.session,s.tool,s.project);};
     t.onclick=open;t.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();open(event);}};
     mountTablePagers(t, page, page.total, page.rows.length, renderSessionTable);
@@ -2028,7 +2062,7 @@
       ...(hasUsage ? [['usage',28]] : []),...(C.total || C.cost ? [['totals',16]] : [])];
     const weight = groups.reduce((sum,group)=>sum+group[1],0);
     t.style.removeProperty('min-width');
-    t.classList.add('records-table');
+    t.classList.add('records-table', 'data-table');
     let html = `<colgroup>${groups.map(([,width])=>`<col style="width:${width/weight*100}%">`).join('')}</colgroup>` +
       `<thead><tr>${groups.map(([key])=>`<th scope="col">${labels[key]}</th>`).join('')}</tr></thead><tbody>`;
     r.rows.forEach((x, i) => {
@@ -2037,13 +2071,14 @@
         ['cache_read',isEn()?'Cache read':'缓存读'],['cache_write',isEn()?'Cache write':'缓存写']]
         .filter(([key])=>C[key]).map(([key,label])=>`<span class="rec-usage-item"><span>${label}</span><b data-countup>${fmtExact(x[key])}</b></span>`);
       if (C.output && x.reasoning) usage.push(`<span class="rec-usage-item"><span>${isEn()?'Reasoning':'推理'}</span><b data-countup>${fmtExact(x.reasoning)}</b></span>`);
+      if (hasUsage) usage.push(`<span class="rec-usage-item rec-cache-rate" title="${esc(window.TLUsage.cacheTitle(x, isEn()))}"><span>${isEn() ? 'Cache hit' : '缓存命中'}</span><b>${window.TLUsage.cacheLabel(x, isEn())}</b></span>`);
       const costKind=({actual:isEn()?'Actual':'实付',estimated:isEn()?'Estimated':'估算',free:isEn()?'Free':'免费',unknown:isEn()?'Unpriced':'未定价'})[x.cost_kind] || '';
       html += `<tr ${x.session ? 'class="clickable" tabindex="0"' : ''} data-record-index="${i}" title="${x.session?(isEn()?'Open session details':'查看会话详情'):''}">
         <td data-label="${labels.time}" class="rec-time">${dtime(x.ts)}</td>
         <td data-label="${labels.tool}" class="rec-identity"><span class="chip"><span class="sw" style="background:${m.color || ROLE.total()}"></span>${esc(toolName(m, x.tool))}</span>${C.model?`<span class="rec-model" data-no-countup>${esc(x.model || '—')}</span>`:''}</td>
-        ${C.project || C.source ? `<td data-label="${labels.project}" class="rec-project">${C.project?`<span>${esc(x.project || '—')}</span>`:''}${C.source?`<small class="rec-source" title="${esc(x.src || '')}">${esc((x.src || '').split(/[\\/]/).pop())}</small>`:''}</td>`:''}
+        ${C.project || C.source ? `<td data-label="${labels.project}" class="rec-project">${C.project ? identityPath(x.project) : ''}${C.source?`<small class="rec-source" title="${esc(x.src || '')}">${esc((x.src || '').split(/[\\/]/).pop())}</small>`:''}</td>`:''}
         ${hasUsage ? `<td data-label="${labels.usage}" class="rec-usage"><div>${usage.join('')}</div></td>`:''}
-        ${C.total || C.cost ? `<td data-label="${labels.totals}" class="rec-totals">${C.total?`<strong data-countup>${fmtExact(x.total)}</strong>`:''}${C.cost?`<span class="rec-cost" title="${esc([x.cost_source,x.price_version].filter(Boolean).join(' · '))}"><b data-countup>${x.cost_kind==='unknown'?(isEn()?'Unpriced':'未定价'):money(x.cost || 0)}</b><small>${esc(costKind)}</small></span>`:''}</td>`:''}
+        ${C.total || C.cost ? `<td data-label="${labels.totals}" class="rec-totals">${C.total?`<strong data-countup>${fmtExact(x.total)}</strong>`:''}${C.cost?`<span class="rec-cost" title="${esc([x.cost_source,x.price_version].filter(Boolean).join(' · '))}"><b title="${esc(money(x.cost || 0))}" data-countup>${x.cost_kind==='unknown'?(isEn()?'Unpriced':'未定价'):displayMoney(x.cost || 0)}</b><small>${esc(costKind)}</small></span>`:''}</td>`:''}
       </tr>`;
     });
     if (!r.rows.length) {
@@ -2484,9 +2519,15 @@
     <p>Each record uses <code>input + output + cache read + cache write + reasoning</code>.
     Cache-hit tokens are cheaper, but they do occupy the model's context window, so they are
     counted in the total and broken out separately to show where the cost comes from.</p>
+    <p><b>Input cache hit rate</b> is <code>cache read ÷ (uncached input + cache read + cache write)</code>.
+    Counts are added across the selected scope before dividing; output and reasoning are excluded from the denominator.
+    No input data displays as <code>N/A</code>; input with no cache reads is <code>0%</code>.
+    This is the share of collected input tokens read from cache, not a request hit rate or cost-saving rate.
+    <b>Average tokens per call</b> is total tokens divided by model calls; no calls displays as unavailable.</p>
     <h4>2. Where the data comes from</h4>
-    <p>Everything is read from local files on this machine. The app <b>never goes online and
-    never uploads anything</b>. It ships with ${adapterCount()} data-source adapters:</p>
+    <p>Usage statistics are read from local files on this machine; <b>usage data is not uploaded</b>.
+    Optional AI features send the content you choose to your configured API when you run them.
+    It ships with ${adapterCount()} data-source adapters:</p>
     <ul>
       <li><span class="tag tag-green">Exact</span> Claude Code, Codex CLI, Gemini CLI, DeepSeek
         Harness, OpenCode / Mimocode, WorkBuddy, ZCode, Kimi Code CLI, Cline / Roo / Kilo, Continue,
@@ -2528,6 +2569,10 @@
     <h4>一、token 总量怎么算</h4>
     <p>每条记录取 <code>输入 + 输出 + 缓存读 + 缓存写 + 推理</code>。缓存命中的 token 虽然便宜，但确实占用了模型的
     上下文窗口，所以计入总量、并单独拆分展示，便于判断"贵在哪"。</p>
+    <p><b>输入缓存命中率</b>取 <code>缓存读 ÷（未缓存输入 + 缓存读 + 缓存写）</code>。
+    先汇总当前范围的用量再相除，输出与推理不进入分母。没有输入数据时显示 <code>—</code>；有输入但没有缓存读取时为 <code>0%</code>。
+    该值是已采集输入 Token 的缓存读取占比，不代表请求命中率或省费比例。
+    <b>均次消耗</b>取总 Token 除以模型调用次数；没有调用时显示不可用。</p>
     <h4>二、数据从哪来</h4>
     <p>用量统计读取本机磁盘上的日志，<b>统计数据不上传</b>。可选的提示词优化与模型测试会向你配置的 API 发送所输入的内容；只有主动运行时才会请求。共内置 ${adapterCount()} 个数据源适配器：</p>
     <ul>
@@ -2671,21 +2716,21 @@
 
     /* 缓存效率 */
     const s = D.summary;
-    const denom = (s.input || 0) + (s.cache_read || 0) + (s.cache_write || 0);
-    const hit = denom ? (s.cache_read * 100 / denom) : 0;
+    const hit = (window.TLUsage.cacheRatio(s) || 0) * 100;
     const cacheSave = (D.insights || []).find((x) => x.key === 'cache');
     $('#cacheStat').innerHTML = `
-      <div class="cs-row"><span>缓存命中率</span><b>${hit.toFixed(1)}%</b></div>
+      <div class="cs-row" title="${esc(window.TLUsage.cacheTitle(s, isEn()))}"><span>${isEn() ? 'Input cache hit rate' : '输入缓存命中率'}</span><b>${window.TLUsage.cacheLabel(s, isEn())}</b></div>
       <div class="cs-bar"><i style="width:${Math.min(100, hit).toFixed(1)}%"></i></div>
       <div class="cs-row"><span>缓存读 Token</span><b>${fmt(s.cache_read)}</b></div>
       <div class="cs-row"><span>未缓存输入</span><b>${fmt(s.input)}</b></div>
+      <div class="cs-row"><span>${isEn() ? 'Cache write' : '缓存写入'}</span><b>${fmt(s.cache_write)}</b></div>
       <div class="cs-row"><span>估算节省</span><b style="color:var(--ok)">${cacheSave ? cacheSave.value : '—'}</b></div>
       <div class="cs-row"><span>整体记录费用</span><b>${money(s.cost, rate)}</b></div>`;
   }
 
   /* 周报卡片：本周用量 + 本周期预算进度。纯本地计算、零 AI、零配置；
      没设预算时只显示本周摘要，顺带引导去设置预算。 */
-  const weeklyDigestCache = { at: 0, html: '' };
+  const weeklyDigestCache = { at: 0, key: '', value: null, pending: null };
   const compactTokens = (n) => {
     n = Number(n) || 0;
     const neg = n < 0; n = Math.abs(n);
@@ -2697,12 +2742,23 @@
   async function renderWeeklyDigest() {
     const host = $('#weeklyDigest');
     if (!host) return;
-    if (weeklyDigestCache.html && Date.now() - weeklyDigestCache.at < 600000) {
-      host.innerHTML = weeklyDigestCache.html; host.hidden = false; return;
+    const key = String(S.epoch);
+    let value = weeklyDigestCache.key === key && Date.now() - weeklyDigestCache.at < 600000 ? weeklyDigestCache.value : null;
+    if (!value) {
+      if (weeklyDigestCache.key !== key || !weeklyDigestCache.pending) {
+        weeklyDigestCache.value = null;
+        weeklyDigestCache.key = key;
+        weeklyDigestCache.pending = Promise.all([api('/api/summary?range=7d'), api('/api/budget')]);
+      }
+      const pending = weeklyDigestCache.pending;
+      try { value = await pending; }
+      catch (_) { if (weeklyDigestCache.key === key) host.hidden = true; return; }
+      finally { if (weeklyDigestCache.pending === pending) weeklyDigestCache.pending = null; }
+      if (weeklyDigestCache.key !== key) return;
+      weeklyDigestCache.value = value;
+      weeklyDigestCache.at = Date.now();
     }
-    let week = null, budget = null;
-    try { [week, budget] = await Promise.all([api('/api/summary?range=7d'), api('/api/budget')]); }
-    catch (_) { host.hidden = true; return; }
+    const [week, budget] = value;
     const en = isEn();
     const s = (week && week.summary) || {};
     const b = (budget && budget.budget) || {};
@@ -2727,13 +2783,13 @@
       : `<a href="#" class="wd-hint" data-view-goto="settings">${en ? 'Set a budget to track your pace →' : '设置预算，掌握用量节奏 →'}</a>`;
     host.innerHTML = `
       <div class="card-head">
-        <div><h3>${en ? 'Weekly digest' : '本周速览'}</h3>
+        <div><h3>${en ? 'Last 7 days' : '近 7 天速览'}</h3>
           <p>${en ? 'Local summary, no AI needed' : '本地计算，无需 AI'}</p></div>
       </div>
       <div class="wd-body">
-        <div class="wd-kv"><span>${en ? 'Tokens (7d)' : '本周 Tokens'}</span><b data-countup>${fmtExact(s.total || 0)}</b></div>
-        <div class="wd-kv"><span>${en ? 'Cost (7d)' : '本周费用'}</span><b data-countup>${money(s.cost || 0)}</b></div>
-        <div class="wd-kv"><span>${en ? 'Active days' : '活跃天数'}</span><b>${s.days || '—'}</b></div>
+        <div class="wd-kv"><span>${en ? 'Tokens' : 'Token 用量'}</span><b data-countup>${fmtExact(s.total || 0)}</b></div>
+        <div class="wd-kv"><span>${en ? 'Recorded cost' : '记录费用'}</span><b title="${esc(money(s.cost || 0))}" data-countup>${displayMoney(s.cost || 0)}</b></div>
+        <div class="wd-kv" title="${esc(window.TLUsage.cacheTitle(s, en))}"><span>${en ? 'Cache hit rate' : '缓存命中率'}</span><b>${window.TLUsage.cacheLabel(s, en)}</b></div>
         <div class="wd-kv"><span>${en ? 'Calls' : '调用次数'}</span><b data-countup>${fmtExact(s.requests || 0)}</b></div>
         ${budgetHtml}
       </div>`;
@@ -2742,8 +2798,6 @@
     host.querySelectorAll('[data-view-goto]').forEach((a) => a.onclick = (e) => {
       e.preventDefault(); switchView(a.getAttribute('data-view-goto'));
     });
-    weeklyDigestCache.html = host.innerHTML;
-    weeklyDigestCache.at = Date.now();
   }
 
   function renderBudget(b, rate) {
@@ -2860,14 +2914,16 @@
     const maxTurn = Math.max(1, ...(d.turns || []).map((x) => x.total));
     body.innerHTML = `
       <div class="kpis" style="grid-template-columns:repeat(2,1fr);gap:9px">
-        ${dkpi('Token 合计', fmt(d.total), fmtExact(d.total))}
-        ${dkpi('调用次数', fmtExact(d.requests), '')}
-        ${dkpi('输入 / 输出', fmt(d.input) + ' / ' + fmt(d.output), '')}
-        ${dkpi(({total_cost:isEn()?'Saved cost':'采集时保存金额',historical_cost:isEn()?'Prices at call date':'调用日价格估算',repriced_cost:isEn()?'Current prices':'现价估算'})[d.cost_basis] || (isEn()?'Known cost':'已计价费用'), money(d.cost, rate), window.TLMoney?.coverage(d) || '')}
+        ${dkpi(isEn() ? 'Total tokens' : 'Token 合计', fmt(d.total), fmtExact(d.total))}
+        ${dkpi(isEn() ? 'Model calls' : '调用次数', fmtExact(d.requests), '')}
+        ${dkpi(isEn() ? 'Input / output' : '输入 / 输出', fmt(d.input) + ' / ' + fmt(d.output), '')}
+        ${dkpi(isEn() ? 'Cache hit rate' : '缓存命中率', window.TLUsage.cacheLabel(d, isEn()), isEn() ? 'Cache read / all input' : '缓存读 / 全部输入')}
+        ${dkpi(isEn() ? 'Tokens / call' : '均次消耗', averageLabel(d), isEn() ? 'Tokens per model call' : '每次模型调用的 Token 用量')}
+        ${dkpi(({total_cost:isEn()?'Saved cost':'采集时保存金额',historical_cost:isEn()?'Prices at call date':'调用日价格估算',repriced_cost:isEn()?'Current prices':'现价估算'})[d.cost_basis] || (isEn()?'Known cost':'已计价费用'), displayMoney(d.cost), window.TLMoney?.coverage(d) || '')}
       </div>
-      <h4 class="dsec">时间范围</h4>
+      <h4 class="dsec">${isEn() ? 'Date range' : '时间范围'}</h4>
       <div class="prose" style="font-size:12px">${dtime(d.first_ts)} → ${dtime(d.last_ts)}
-        <span data-countup style="color:var(--muted)">（${d.daily.length} 个活跃日）</span></div>
+        <span data-countup style="color:var(--muted)">${isEn() ? `(${d.daily.length} active days)` : `（${d.daily.length} 个活跃日）`}</span></div>
 
       <h4 class="dsec">${isEn() ? 'Daily usage' : '每日用量'}</h4>
       <div class="dbar">${(d.daily || []).map((x) => `
@@ -2883,7 +2939,7 @@
         <th style="width:96px">${isEn() ? 'Share' : '占比'}</th></tr></thead>
         <tbody>${(d.models || []).map((m) => `
           <tr><td>${esc(m.model)}</td><td class="num">${fmtExact(m.total)}</td>
-          <td class="num mut">${fmtExact(m.requests)}</td><td class="num">${money(m.cost, rate)}</td>
+          <td class="num mut">${fmtExact(m.requests)}</td><td class="num" title="${esc(money(m.cost, rate))}">${displayMoney(m.cost)}</td>
           <td><div class="bar-mini"><i style="width:${m.total / Math.max(1, d.total) * 100}%;
             background:linear-gradient(90deg,${ROLE.total()},${ROLE.output()})"></i></div></td></tr>`).join('')}
         </tbody></table></div>
@@ -2898,7 +2954,7 @@
           </div>
           <div class="turn-bar"><i style="width:${Math.max(2, t.total / maxTurn * 100)}%"></i></div>
           <div class="turn-meta">${isEn() ? 'Input' : '输入'} ${fmtExact(t.input)} · ${isEn() ? 'Output' : '输出'} ${fmtExact(t.output)} ·
-            ${isEn() ? 'Cache read' : '缓存读'} ${fmtExact(t.cache_read)} · ${t.cost_kind==='unknown'?(isEn()?'Unpriced':'未定价'):money(t.cost || 0)}</div>
+            ${isEn() ? 'Cache read' : '缓存读'} ${fmtExact(t.cache_read)} · <span title="${esc(window.TLUsage.cacheTitle(t, isEn()))}">${isEn() ? 'Cache hit' : '命中'} ${window.TLUsage.cacheLabel(t, isEn())}</span> · ${t.cost_kind==='unknown'?(isEn()?'Unpriced':'未定价'):displayMoney(t.cost || 0)}</div>
         </div>`).join('')}</div>`;
     if(window.TLResponsive)window.TLResponsive.apply($('#drawer'));
     animateNumericElements($('#drawer'));
@@ -4347,7 +4403,7 @@
       `TokenLens · ${rangeLabel(D)}`,
       `Total tokens: ${n(s.total)}`,
       `Input ${n(s.input)} / Output ${n(s.output)} / Cache read ${n(s.cache_read)}`,
-      `${n(s.requests)} calls · ${s.sessions} sessions · ${s.cache_hit_rate}% cache hit`,
+      `${n(s.requests)} calls · ${s.sessions} sessions · ${window.TLUsage.cacheLabel(s, true)} input cache hit`,
       `Recorded cost ${money(s.cost, D.config.usd_to_cny)} · saved charges and estimates`,
       s.unknown_records==null?'Cost completeness is shown in Cost management':window.TLMoney?.coverage(s),
       '',
@@ -4357,7 +4413,7 @@
       `tokenlens · ${D.range_label}`,
       `总 Token：${n(s.total)}`,
       `输入 ${n(s.input)} / 输出 ${n(s.output)} / 缓存读 ${n(s.cache_read)}`,
-      `调用 ${n(s.requests)} 次 · ${s.sessions} 个会话 · 缓存命中 ${s.cache_hit_rate}%`,
+      `调用 ${n(s.requests)} 次 · ${s.sessions} 个会话 · 输入缓存命中 ${window.TLUsage.cacheLabel(s, false)}`,
       `记录费用 ${money(s.cost, D.config.usd_to_cny)} · 实付 + 已记录估算`,
       s.unknown_records==null?'费用完整性见成本管理':window.TLMoney?.coverage(s),
       '',

@@ -18,7 +18,7 @@
   }
   function overviewRows(snapshot,c){
     const a=snapshot.current||{},b=snapshot.previous||{};
-    return [[c.t('已记录费用','Recorded cost'),'cost',money],[c.t('用量记录数','Usage records'),'records',fmt],[c.t('请求数','Requests'),'requests',fmt],['Token','tokens',fmt],[c.t('平均输入 Token','Average input tokens'),'average_input',fmt],[c.t('缓存命中率','Cache hit rate'),'cache_hit_rate',v=>fmt(num(v)*100)+'%'],[c.t('计价覆盖率','Pricing coverage'),'pricing_coverage',v=>fmt(num(v)*100)+'%']].map(([label,key,format])=>[label,format(a[key]),format(b[key])]);
+    return [[c.t('已记录费用','Recorded cost'),'cost',money],[c.t('用量记录数','Usage records'),'records',fmt],[c.t('请求数','Requests'),'requests',fmt],['Token','tokens',fmt],[c.t('平均输入 Token','Average input tokens'),'average_input',fmt],[c.t('输入缓存命中率','Input cache hit rate'),'cache_hit_rate',(v,row)=>window.TLUsage.cacheLabel(row,c.english)],[c.t('计价覆盖率','Pricing coverage'),'pricing_coverage',v=>fmt(num(v)*100)+'%']].map(([label,key,format])=>[label,format(a[key],a),format(b[key],b)]);
   }
   function reportTable(headers,rows){return `<div class="aa-report-table"><table><thead><tr>${headers.map(x=>`<th>${esc(x)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map(x=>`<td>${esc(x)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;}
   function reportPreview(report,c){

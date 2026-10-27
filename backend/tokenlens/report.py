@@ -90,6 +90,15 @@ def _money_cell(usd, cny_rate=None) -> str:
     return money(usd)
 
 
+def _cache_hit_cell(ratio) -> str:
+    """The canonical value is a fraction; format it as percent exactly once."""
+    return "N/A" if ratio is None else "%.1f%%" % (ratio * 100)
+
+
+def _average_cell(value) -> str:
+    return "N/A" if value is None else format(value, ",.2f")
+
+
 # ----------------------------------------------------------------------
 # 各段落
 # ----------------------------------------------------------------------
@@ -137,16 +146,16 @@ def _summary_table(agg, rng, s, lang, tool=None) -> str:
     if lang == "en-US":
         headers = ["Metric", "Value", "Previous", "Change"]
         metric_names = ["Total tokens", "Input", "Output", "Cache read",
-                        "Cache write", "Calls", "Recorded cost"]
+                        "Cache write", "Calls", "Recorded cost",
+                        "Input token cache hit rate", "Average tokens per request"]
     else:
         headers = ["指标", "本期", "上期", "变化"]
         metric_names = ["总 tokens", "输入", "输出", "缓存读",
-                        "缓存写", "调用次数", "记录费用"]
+                        "缓存写", "调用次数", "记录费用",
+                        "输入 Token 缓存命中率", "均次 tokens"]
 
-    # compare() 不支持按来源收窄。筛选状态下若拿「全部来源的上期」去和
-    # 「单一来源的本期」比，会得出一个看着像那么回事、其实毫无意义的涨跌幅，
-    # 所以这里宁可不给上期，也不给一个错了的对比。
-    cmp_data = {} if tool else agg.compare(rng)
+    # Both periods must keep the same source and query-scoped filters.
+    cmp_data = agg.compare(rng, tool)
     cur = cmp_data.get("current") or {}
     prev = cmp_data.get("previous") or {}
 
@@ -167,6 +176,10 @@ def _summary_table(agg, rng, s, lang, tool=None) -> str:
          d(cur.get("requests_delta"))],
         [metric_names[6], _money_cell(s.get("cost")), _money_cell(prev.get("cost")),
          d(cur.get("cost_delta"))],
+        [metric_names[7], _cache_hit_cell(s.get("cache_hit_ratio")),
+         _cache_hit_cell(prev.get("cache_hit_ratio")), "—"],
+        [metric_names[8], _average_cell(s.get("avg_tokens_per_request")),
+         _average_cell(prev.get("avg_tokens_per_request")), "—"],
     ]
     return _table(headers, rows)
 
@@ -286,14 +299,19 @@ def _privacy_note(agg, rng, lang, tool=None) -> str:
         txt = ("Costs include recorded charges and price estimates; unpriced records are excluded. "
                "Estimates from public list prices are for reference only; "
                "subscriptions, free tiers and gateway discounts are not reflected. "
-               "Totals count input + output + cache read + cache write + reasoning.")
+               "Totals count input + output + cache read + cache write + reasoning. "
+               "Input token cache hit rate is cache read / (uncached input + cache read + cache write), "
+               "not a request hit rate or cost savings percentage. Average tokens per request is total tokens / calls. "
+               "N/A means no input tokens or no calls, respectively.")
         if unknown:
             txt += (" %d model(s) are absent from the default price list; recorded charges or saved rates may still apply: %s."
                     % (len(unknown),
                        ", ".join(_label(_esc(r["model"]), lang) for r in unknown[:5])))
         return txt
     txt = ("费用包含采集到的实付金额与价格估算，未定价记录不计入金额。公开价目估算仅供参考；订阅制、免费额度与中转折扣不在估算中体现。"
-           "总量口径为 输入 + 输出 + 缓存读 + 缓存写 + 思考。")
+           "总量口径为 输入 + 输出 + 缓存读 + 缓存写 + 思考。"
+           "输入 Token 缓存命中率 = 缓存读 /（未缓存输入 + 缓存读 + 缓存写），不代表请求命中率或省费比例。"
+           "均次 tokens = 总 tokens / 调用次数；两项指标的 N/A 分别表示没有输入 Token 或没有调用次数。")
     if unknown:
         txt += "其中 %d 个模型未收录默认单价；仍可使用采集金额或已保存价格：%s。" % (
             len(unknown), "、".join(_esc(r["model"]) for r in unknown[:5]))
@@ -358,6 +376,15 @@ def render(agg, rng="30d", lang="zh-CN", tool=None, cfg=None, title=None) -> str
     if not (s.get("total") or 0):
         L.append("_No usage recorded in this period._" if en
                  else "_该区间没有记录到任何用量。_")
+        L.append("")
+        # Even an empty period distinguishes unavailable input from a real 0%.
+        # Use the existing summary; no comparison queries are needed here.
+        L.append(_table(["Metric", "Value"] if en else ["指标", "本期"], [
+            ["Input token cache hit rate" if en else "输入 Token 缓存命中率",
+             _cache_hit_cell(s.get("cache_hit_ratio"))],
+            ["Average tokens per request" if en else "均次 tokens",
+             _average_cell(s.get("avg_tokens_per_request"))],
+        ]))
         return "\n".join(L) + "\n"
 
     # 一句话摘要
@@ -413,6 +440,6 @@ def render(agg, rng="30d", lang="zh-CN", tool=None, cfg=None, title=None) -> str
 
     L.append("---")
     L.append("")
-    L.append(_privacy_note(agg, rng, lang))
+    L.append(_privacy_note(agg, rng, lang, tool))
     L.append("")
     return "\n".join(L)

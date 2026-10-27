@@ -84,11 +84,14 @@ def query_aggregator(store, cfg, filters):
 def report_aggregator(store, cfg, filters):
     """Project both report periods, with date narrowing applied to current only."""
     rng = filters['range']
+    # Reuse the records/summary policy: strip dates, ignore invalid values and
+    # swap reversed bounds before intersecting with the selected range.
+    dates = Aggregator(store, cfg).filtered(filters)._filters
     start, end, _, _ = range_bounds(rng)
-    if filters.get('from'):
-        start = max(start or filters['from'], filters['from'])
-    if filters.get('to'):
-        end = min(end, filters['to'])
+    if dates.get('from'):
+        start = max(start or dates['from'], dates['from'])
+    if dates.get('to'):
+        end = min(end, dates['to'])
     if not start or start > end:
         return query_aggregator(store, cfg, filters), rng
     try:
@@ -101,7 +104,7 @@ def report_aggregator(store, cfg, filters):
     agg = Aggregator(store, cfg).filtered(scope)
     project_cost_basis(store, cfg, filters.get('cost_basis','total_cost'),
                        *agg._where('%s~%s' % (prior,end)))
-    if filters.get('from') or filters.get('to'):
+    if dates.get('from') or dates.get('to'):
         rng = '%s~%s' % (start,end)
     return agg, rng
 
@@ -1103,12 +1106,14 @@ def make_handler(app: App):
                     write("\ufeff")
                     columns = ("day", "ts", "tool", "model", "project", "session", "input", "output",
                                "cache_read", "cache_write", "reasoning", "total", "requests", "cost",
-                               "cost_kind", "cost_source", "price_version", "currency", "src")
+                               "cost_kind", "cost_source", "price_version", "currency", "src",
+                               "input_total", "cache_hit_ratio", "avg_tokens_per_request")
                     out = io.StringIO()
                     csv.writer(out).writerow(("date", "timestamp", "tool", "model", "project", "session",
                                               "input", "output", "cache_read", "cache_write", "reasoning", "total",
                                               "requests", "cost_usd", "cost_kind", "cost_source", "price_version",
-                                              "currency", "source"))
+                                              "currency", "source", "input_total", "cache_hit_ratio",
+                                              "avg_tokens_per_request"))
                     write(out.getvalue())
                     for batch in batches():
                         out = io.StringIO()

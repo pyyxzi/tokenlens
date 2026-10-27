@@ -32,6 +32,23 @@ Full app development (window, tray, packaging) additionally needs Windows 10/11 
 
 Keep `WorkDir` outside the repository — build artifacts must never enter the source tree.
 
+For frontend changes, check asset references and derived metric behavior:
+
+```bash
+python tools/check_frontend_assets.py
+node --test tools/test_usage_metrics.cjs
+```
+
+To inspect the real frontend and API without using personal usage data, run:
+
+```bash
+python -B tools/preview_workspace.py
+# Empty-state preview:
+python -B tools/preview_workspace.py --empty
+```
+
+Open the local URL printed at startup. The helper creates only synthetic usage in a disposable workspace, isolates application and source-log directories, and disables scanning, AI requests, imports and destructive API operations. Stop with Ctrl+C or create the printed `STOP_PREVIEW` file; the helper removes its temporary workspace on exit. Do not use real logs or credentials for UI screenshots.
+
 ## Pull requests
 
 1. Keep PRs focused; one adapter or one fix per PR.
@@ -47,7 +64,7 @@ Never commit: real personal logs, your local database, API keys, or anything und
 GitHub Actions runs on every push and PR:
 
 - backend unit tests (Python),
-- frontend asset integrity (`tools/check_frontend_assets.py`),
+- frontend asset integrity, JavaScript syntax and derived usage metric tests,
 - `cargo check` of the Tauri host (Windows).
 
 Tag pushes (`v*`) build the installer and portable archive and attach them to a GitHub Release.

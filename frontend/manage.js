@@ -12,7 +12,11 @@
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const t = (zh, en) => english ? en : zh;
-  const money = (n) => window.TLMoney?.format(n) ?? ('$' + Number(n || 0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:6}));
+  const money = (n) => {
+    const full = window.TLMoney?.format(n) ?? ('$' + Number(n || 0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:6}));
+    const compact = window.TLMoney?.format(n, {precision:2});
+    return compact && /[1-9]/.test(compact) ? compact : full;
+  };
   const price = (n) => n == null ? '—' : '$' + Number(n).toLocaleString('en-US',{maximumFractionDigits:6});
   const costLabel = kind => window.TLMoney?.label(kind,english) || ({actual:t('实付','Actual'),estimated:t('估算','Estimated'),free:t('免费','Free'),unknown:t('未定价','Unpriced')})[kind];
   const num = (n) => Number(n || 0).toLocaleString(english ? 'en-US' : 'zh-CN');
@@ -53,7 +57,8 @@
     const view = tableViews[key], state = tableStates[key];
     state.page = Math.min(Math.max(1, state.page), Math.max(1, Math.ceil(view.rows.length / state.size)));
     const rows = view.rows.slice((state.page - 1) * state.size, state.page * state.size);
-    return table(view.heads, rows, view.numeric) + pagerHTML(key, view.rows.length, state.page, state.size, rows.length);
+    const html = table(view.heads, rows, view.numeric);
+    return (key === 'projects' ? html.replace('tbl manage-table', 'tbl manage-table data-table manage-project-table').replace('<thead>', '<colgroup><col style="width:32%"><col style="width:16%"><col style="width:16%"><col style="width:22%"><col style="width:14%"></colgroup><thead>') : html) + pagerHTML(key, view.rows.length, state.page, state.size, rows.length);
   }
   function pagedTable(key, heads, rows, numeric = []) {
     tableStates[key] ||= {page:1, size:20};
@@ -143,7 +148,7 @@
     const project = rows.find(r => r.id === editedProject) || rows[0];
     const defaultPaths = project ? project.paths.join('\n') : '';
     return `<div class="manage-intro"><div><h3>${t('让每一笔成本归属到项目','Give every cost a project')}</h3><p>${t('使用完整路径识别项目；月预算独立于右上角查看范围。','Full paths identify projects. Monthly budgets are independent of the viewing range.')}</p></div></div>` +
-      (rows.length ? pagedTable('projects',[t('项目 / 路径','Project / paths'),t('Token / 调用','Tokens / calls'),t('范围内采集金额','Saved cost in range'),t('本月 / 月预算','This month / budget'),t('操作','Actions')], rows.map((r,i) => `<tr><td><b>${esc(r.name)}</b><small>${r.paths.map(esc).join('<br>')}</small><small>${r.tags.map(esc).join(' · ')}</small></td><td class="num">${num(r.tokens)}<small>${num(r.requests)} ${t('次调用','calls')}</small></td><td class="num">${money(r.cost)}</td><td class="num">${money(r.period_cost)} / ${r.budget ? money(r.budget) : '—'}${r.budget ? `<small class="${r.ratio > 1 ? 'manage-danger' : ''}">${(r.ratio*100).toFixed(1)}%</small>` : ''}</td><td>${button('edit-project',t('编辑','Edit'),i)} ${button('project-records',t('明细','Records'),i)}</td></tr>`), [1, 2, 3]) : empty(t('扫描数据后，项目会自动出现在这里。','Projects appear here after scanning.'))) +
+      (rows.length ? pagedTable('projects',[t('项目 / 路径','Project / paths'),t('Token / 调用','Tokens / calls'),t('范围内采集金额','Saved cost in range'),t('本月 / 月预算','This month / budget'),t('操作','Actions')], rows.map((r,i) => `<tr><td><span class="data-identity" title="${esc([r.name,...r.paths].join('\n'))}"><b>${esc(r.name)}</b><small class="manage-project-paths">${r.paths.map(esc).join(' · ')}</small></span><small>${r.tags.map(esc).join(' · ')}</small></td><td class="num"><b>${num(r.tokens)}</b><small>${num(r.requests)} ${t('次调用','calls')}</small></td><td class="num">${money(r.cost)}</td><td class="num">${money(r.period_cost)}<small class="${r.budget && r.ratio > 1 ? 'manage-danger' : ''}">${r.budget ? `${t('预算','Budget')} ${money(r.budget)} · ${(r.ratio*100).toFixed(1)}%` : t('未设置预算','No budget set')}</small></td><td><div class="manage-project-actions">${button('edit-project',t('编辑','Edit'),i)}${button('project-records',t('明细','Records'),i)}</div></td></tr>`), [1, 2, 3]) : empty(t('扫描数据后，项目会自动出现在这里。','Projects appear here after scanning.'))) +
       `<form id="manageProjectForm" class="manage-form"><h4>${t('项目名称、标签与预算','Project name, tags and budget')}</h4><label class="field"><span>${t('选择项目','Project')}</span><select class="input" id="manageProject">${rows.map(r=>`<option value="${esc(r.id)}" ${project && project.id===r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>${input('manageProjectName',t('显示名称','Display name'),project ? project.name : '', 'text', 'maxlength="200"')}${input('manageProjectTags',t('标签（逗号分隔）','Tags (comma separated)'),project ? project.tags.join(', ') : '')}${input('manageProjectBudget',t('月预算（USD，0为不限）','Monthly budget (USD, 0 = no limit)'),project ? project.budget : 0,'number','min="0" step="0.01"')}<label class="field manage-wide"><span>${t('关联路径（每行一个；留空保留当前路径）','Associated paths (one per line; blank keeps existing paths)')}</span><textarea class="input" id="manageProjectPaths" rows="3">${esc(defaultPaths)}</textarea></label><div class="manage-wide">${button('save-project',t('保存项目','Save project'),'','btn btn-primary')}</div></form>`;
   }
 

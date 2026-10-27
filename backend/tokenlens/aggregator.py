@@ -12,6 +12,7 @@ from typing import Optional
 
 from .pricing import lookup, is_known
 from .store import search_clause
+from .usage_metrics import with_usage_metrics
 
 TOTAL_EXPR = "(input+output+cache_read+cache_write+reasoning)"
 
@@ -520,9 +521,10 @@ class Aggregator:
         row["delta"] = (round((total - pt) * 100.0 / pt, 1) if pt else None)
         row["active_days"] = row.get("days") or 0
         row["avg_per_day"] = int(total / row["active_days"]) if row.get("active_days") else 0
-        denom = (row.get("input") or 0) + (row.get("cache_read") or 0) + (row.get("cache_write") or 0)
-        row["cache_hit_rate"] = round((row.get("cache_read") or 0) * 100.0 / denom, 1) if denom else 0.0
-        row["avg_per_request"] = int(total / row["requests"]) if row.get("requests") else 0
+        with_usage_metrics(row)
+        # Legacy fields retain their percentage/integer units and zero defaults.
+        row["cache_hit_rate"] = round((row["cache_hit_ratio"] or 0.0) * 100.0, 1)
+        row["avg_per_request"] = int(row["avg_tokens_per_request"] or 0)
         return row
 
     def _summary_from_rows(self, rng, tool):
@@ -561,6 +563,7 @@ class Aggregator:
             for row in rows:
                 row.pop("first_ts", None)
                 row["share"] = round(row["total"] * 100.0 / grand, 2)
+                with_usage_metrics(row)
             return rows
         buckets = {}
         for r in self._rollup_fold(rng, tool=tool):
@@ -591,6 +594,7 @@ class Aggregator:
         grand = sum(r["total"] for r in rows) or 1
         for r in rows:
             r["share"] = round(r["total"] * 100.0 / grand, 2)
+            with_usage_metrics(r)
         return rows
 
     def by_model(self, rng="30d", limit=40, tool=None, offset=0):
@@ -624,6 +628,7 @@ class Aggregator:
                 row["pricing_known"] = is_known(row["model"])
                 for key in ("records", "first_ts", "last_ts"):
                     row.pop(key, None)
+                with_usage_metrics(row)
             return rows
         buckets = {}
         for r in self._rollup_fold(rng, tool=tool):
@@ -654,6 +659,7 @@ class Aggregator:
         for r in rows:
             r["share"] = round(r["total"] * 100.0 / grand, 2)
             r["pricing_known"] = is_known(r.get("model") or "")
+            with_usage_metrics(r)
         return rows
 
     def by_project(self, rng="30d", limit=40, tool=None, offset=0):
@@ -682,8 +688,9 @@ class Aggregator:
                 row["tool_list"] = tool_lists[project]
                 row["project"] = project or "(未标注)"
                 row["share"] = round(row["total"] * 100.0 / grand, 2)
-                for key in ("cache_write", "reasoning", "records", "first_ts"):
+                for key in ("records", "first_ts"):
                     row.pop(key, None)
+                with_usage_metrics(row)
             return rows
         buckets = {}
         for r in self._rollup_fold(rng, tool=tool):
@@ -692,9 +699,10 @@ class Aggregator:
             if b is None:
                 b = buckets[key] = {
                     "project": key or "(未标注)", "total": 0, "input": 0, "output": 0,
-                    "cache_read": 0, "cost": 0.0, "requests": 0,
+                    "cache_read": 0, "cache_write": 0, "reasoning": 0,
+                    "cost": 0.0, "requests": 0,
                     "tools": set(), "sessions": set(), "tl": set(), "last_ts": None}
-            for k in ("total", "input", "output", "cache_read", "cost", "requests"):
+            for k in ("total", "input", "output", "cache_read", "cache_write", "reasoning", "cost", "requests"):
                 b[k] += r[k] or 0
             b["tools"].add(r["tool"])
             b["sessions"].add(_session_identity(r))
@@ -713,6 +721,7 @@ class Aggregator:
         rows = rows[offset:offset+limit]
         for r in rows:
             r["share"] = round(r["total"] * 100.0 / grand, 2)
+            with_usage_metrics(r)
         return rows
 
     def by_category(self, rng="30d"):
@@ -906,8 +915,9 @@ class Aggregator:
                     [*all_params, row["tool"], row["project"], row["session"]])
                 row["model_list"] = ",".join(item["model"] for item in models)
                 row["project"] = row["project"] or "(未标注)"
-                for key in ("cache_write", "reasoning", "records", "first_ts"):
+                for key in ("records", "first_ts"):
                     row.pop(key, None)
+                with_usage_metrics(row)
             return rows
         # A session id can recur under another tool or project; keep the full identity.
         buckets = {}
@@ -921,10 +931,11 @@ class Aggregator:
                 b = buckets[identity] = {
                     "session": sid, "tool": r["tool"],
                     "project": r["project"] or "(未标注)", "total": 0, "input": 0,
-                    "output": 0, "cache_read": 0, "cost": 0.0, "requests": 0,
+                    "output": 0, "cache_read": 0, "cache_write": 0, "reasoning": 0,
+                    "cost": 0.0, "requests": 0,
                     "start_day": r["day"], "end_day": r["day"], "last_ts": None,
                     "models": set()}
-            for k in ("total", "input", "output", "cache_read", "cost", "requests"):
+            for k in ("total", "input", "output", "cache_read", "cache_write", "reasoning", "cost", "requests"):
                 b[k] += r[k] or 0
             if r["day"] < b["start_day"]:
                 b["start_day"] = r["day"]
@@ -952,6 +963,7 @@ class Aggregator:
             identity = (r["tool"], r["project"] if r["project"] != "(未标注)" else "", r["session"])
             r["model_list"] = ",".join(sorted(all_models.get(identity, ())))
             r.pop("models", None)
+            with_usage_metrics(r)
         return rows
 
     def rankings(self, kind, rng="30d", limit=20, offset=0, order="total"):
@@ -1046,6 +1058,8 @@ class Aggregator:
             f" cache_read, cache_write, reasoning, requests, cost, cost_kind, cost_source, price_version, currency, src, extra,"
             f" {TOTAL_EXPR} AS total FROM records {w}"
             f" ORDER BY {order_sql} LIMIT ? OFFSET ?", [*p, limit, offset])
+        for row in rows:
+            with_usage_metrics(row)
         return {"rows": rows, "total": total, "total_capped": False,
                 "offset": offset, "limit": limit}
 
@@ -1059,23 +1073,27 @@ class Aggregator:
         start, end, label, label_en = range_bounds(rng)
 
         def totals(rows):
-            return {
+            return with_usage_metrics({
                 "total": self._sum(rows, "total"),
                 "input": self._sum(rows, "input"),
                 "output": self._sum(rows, "output"),
                 "cache_read": self._sum(rows, "cache_read"),
+                "cache_write": self._sum(rows, "cache_write"),
+                "reasoning": self._sum(rows, "reasoning"),
                 "requests": self._sum(rows, "requests"),
                 "cost": self._sum(rows, "cost"),
                 "sessions": _ndistinct(_session_identity(r) for r in rows),
                 "days": _ndistinct(r["day"] for r in rows),
-            }
+            })
 
         sql_mode = self._uses_sql_rollup()
         def period_totals(period):
             if not sql_mode:
                 return totals(self._rollup_fold(period, tool))
             result = self._sql_summary(period, tool)
-            return {k:result[k] for k in ("total","input","output","cache_read","requests","cost","sessions","days")}
+            return with_usage_metrics({k:result[k] for k in
+                ("total", "input", "output", "cache_read", "cache_write", "reasoning",
+                 "requests", "cost", "sessions", "days")})
         cur = period_totals(rng)
         if not start:
             return {"label": "全部时间", "label_en": "All time",
@@ -1152,22 +1170,30 @@ class Aggregator:
             f"SELECT tool, COALESCE(NULLIF(project,''),'(未标注)') AS project,"
             f" COALESCE(SUM({TOTAL_EXPR}),0) AS total, COALESCE(SUM(input),0) AS input,"
             f" COALESCE(SUM(output),0) AS output, COALESCE(SUM(cache_read),0) AS cache_read,"
-            f" COALESCE(SUM(cache_write),0) AS cache_write, COALESCE(SUM(requests),0) AS requests,"
+            f" COALESCE(SUM(cache_write),0) AS cache_write, COALESCE(SUM(reasoning),0) AS reasoning,"
+            f" COALESCE(SUM(requests),0) AS requests,"
             f" COALESCE(SUM(cost),0) AS cost, MIN(ts) AS first_ts, MAX(ts) AS last_ts,"
             f" COUNT(*) AS records,COALESCE(SUM(CASE WHEN cost_kind='unknown' THEN 1 ELSE 0 END),0) AS unknown_records FROM records {w}", p)
         if not head or not head.get("records"):
             return None
         models = self._q(
             f"SELECT COALESCE(NULLIF(model,''),'未知模型') AS model,"
-            f" COALESCE(SUM({TOTAL_EXPR}),0) AS total, COALESCE(SUM(requests),0) AS requests,"
-            f" COALESCE(SUM(cost),0) AS cost FROM records {w}"
+            f" COALESCE(SUM({TOTAL_EXPR}),0) AS total, COALESCE(SUM(input),0) AS input,"
+            f" COALESCE(SUM(output),0) AS output, COALESCE(SUM(cache_read),0) AS cache_read,"
+            f" COALESCE(SUM(cache_write),0) AS cache_write, COALESCE(SUM(reasoning),0) AS reasoning,"
+            f" COALESCE(SUM(requests),0) AS requests, COALESCE(SUM(cost),0) AS cost FROM records {w}"
             f" GROUP BY model ORDER BY total DESC", p)
         daily = self._q(
-            f"SELECT day, COALESCE(SUM({TOTAL_EXPR}),0) AS total, COALESCE(SUM(requests),0) AS requests"
+            f"SELECT day, COALESCE(SUM({TOTAL_EXPR}),0) AS total, COALESCE(SUM(input),0) AS input,"
+            f" COALESCE(SUM(output),0) AS output, COALESCE(SUM(cache_read),0) AS cache_read,"
+            f" COALESCE(SUM(cache_write),0) AS cache_write, COALESCE(SUM(reasoning),0) AS reasoning,"
+            f" COALESCE(SUM(requests),0) AS requests"
             f" FROM records {w} GROUP BY day ORDER BY day ASC", p)
         turns = self._q(
-            f"SELECT ts, model, input, output, cache_read, cache_write, reasoning, cost, cost_kind,"
+            f"SELECT ts, model, input, output, cache_read, cache_write, reasoning, requests, cost, cost_kind,"
             f" {TOTAL_EXPR} AS total, src FROM records {w} ORDER BY ts ASC LIMIT {int(limit)}", p)
+        for row in [head, *models, *daily, *turns]:
+            with_usage_metrics(row)
         head["models"] = models
         head["daily"] = daily
         head["turns"] = turns
