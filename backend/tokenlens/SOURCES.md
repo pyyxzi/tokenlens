@@ -37,6 +37,22 @@ changing direction): Cline family subtracts cache reads but not cache writes
 from tokensIn; OpenCode stores tokens_reasoning without subtracting it from
 output; ApiLog records a plain "cost" field as USD regardless of currency.
 
+Codex CLI
+---------
+https://github.com/openai/codex
+
+Reads rollout JSONL under ~/.codex/sessions/YYYY/MM/DD/ and
+~/.codex/archived_sessions/ (CODEX_HOME is honoured when set). Current Codex
+versions compress each rollout to .jsonl.zst; compressed files are decompressed
+transparently, so a scan never silently skips a whole history. Per-response
+token_usage_record ledgers are authoritative; legacy event_msg/token_count
+cumulative counters are converted to deltas and a compaction/reset starts a new
+segment. Forked rollouts replay the parent's history with fresh timestamps, so
+usage from a non-owner thread is skipped. input_tokens includes
+cached_input_tokens; the cached subset is split out so totals and costs do not
+double count. The optional quick mode reads threads.tokens_used from
+state_5.sqlite and is marked aggregate.
+
 Gemini CLI
 ----------
 Official session management and recording implementation:

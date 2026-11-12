@@ -287,9 +287,18 @@ class SourceImporter:
                         original_tool = record.tool
                         # Native IDs include a temporary source path; normalize
                         # them to canonical accounting fields for replay safety.
+                        #
+                        # An explicit id is only unique within its provider and
+                        # day in practice: CSV exports often reuse a row number,
+                        # and gateways reuse request ids across accounts. It is
+                        # therefore combined with the accounting fields, so two
+                        # genuinely different calls sharing an id are both kept,
+                        # while re-importing the identical row stays idempotent.
+                        usage_identity = [record.ts, record.model, record.project, record.session,
+                                          record.input, record.output, record.cache_read,
+                                          record.cache_write, record.reasoning, record.requests]
                         explicit = record.event_id if chosen in ("csv", "api") else str(record.extra.get("request_id", "") or "")
-                        identity = [original_tool, record.session, explicit] if explicit else [original_tool, record.ts, record.model, record.project, record.session,
-                            record.input, record.output, record.cache_read, record.cache_write, record.reasoning, record.requests]
+                        identity = [original_tool, explicit] + usage_identity if explicit else [original_tool] + usage_identity
                         digest = hashlib.sha256(json.dumps(identity, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
                         if explicit:
                             key = "import:" + digest

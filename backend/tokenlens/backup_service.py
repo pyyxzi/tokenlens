@@ -286,7 +286,14 @@ class BackupService:
             trusted_fts = {row[0]: " ".join((row[1] or "").lower().split()) for row in
                            stage._conn.execute("SELECT name,sql FROM sqlite_schema WHERE type='table'")
                            if row[0] in FTS_TABLES}
+            # Planner statistics (sqlite_stat1/4) are created by PRAGMA
+            # optimize/ANALYZE and are not application data. They are copied
+            # into every export snapshot, so rejecting them made an app's own
+            # backup unrestorable. Skip them instead.
+            planner_tables = {"sqlite_stat1", "sqlite_stat4"}
             for kind, name, table, sql in objects:
+                if kind == "table" and name in planner_tables:
+                    continue
                 if kind in ("trigger", "view"):
                     raise BackupError("备份数据库包含不允许的触发器或视图")
                 if kind == "table" and name not in set(data_tables) | FTS_TABLES | {"sqlite_sequence"}:

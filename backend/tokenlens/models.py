@@ -28,6 +28,24 @@ MAX_USAGE_COST = 1e24
 # 时间工具
 # --------------------------------------------------------------------------
 
+_CALENDAR_FORMATS = {8: "%Y%m%d", 14: "%Y%m%d%H%M%S"}
+
+
+def _calendar_epoch(text: str) -> int:
+    """20260102 / 20260102030405 → epoch seconds (0 when not a valid date).
+
+    These compact stamps sit far below the epoch-seconds range, so the generic
+    numeric path used to read them as seconds and place imports in 1970.
+    """
+    fmt = _CALENDAR_FORMATS.get(len(text))
+    if not fmt:
+        return 0
+    try:
+        return int(datetime.strptime(text, fmt).timestamp())
+    except ValueError:
+        return 0
+
+
 def to_epoch(value) -> int:
     """把各种时间表示统一成 epoch 秒（UTC 基准，按本地时区展示）。"""
     if value is None:
@@ -39,6 +57,10 @@ def to_epoch(value) -> int:
             return 0
         if not math.isfinite(v):
             return 0
+        if v.is_integer():
+            junction = _calendar_epoch(str(int(v)))
+            if junction:
+                return junction
         # 毫秒 / 微秒 / 纳秒 自动降级
         while v > 4.0e10:
             v /= 1000.0
@@ -49,6 +71,10 @@ def to_epoch(value) -> int:
             return 0
         # 纯数字
         if s.isdigit():
+            # 20260102 / 20260102030405 are calendar stamps, not epoch seconds.
+            junction = _calendar_epoch(s)
+            if junction:
+                return junction
             return to_epoch(int(s))
         txt = s.replace("Z", "+00:00")
         for fmt in (None, "%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z",

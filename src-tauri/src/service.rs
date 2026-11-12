@@ -12,7 +12,7 @@ const MAX_RESPONSE: usize = 128 * 1024 * 1024;
 const MAX_EXPORT: usize = 1024 * 1024 * 1024;
 const MAX_BODY: usize = 44_743_340;
 const GET_PATHS: &[&str] = &["/api/ai-settings","/api/ai-thinking","/api/assistant/state","/api/assistant/snapshot",
- "/api/assistant/report","/api/ccswitch/connections","/api/backup/export","/api/bootstrap","/api/dashboard",
+ "/api/assistant/report","/api/ccswitch/connections","/api/bootstrap","/api/dashboard",
  "/api/summary","/api/sources","/api/rankings","/api/records","/api/session","/api/prompt","/api/tasks",
  "/api/finance","/api/manage","/api/diagnostics","/api/scan/status","/api/scan/stream","/api/export",
  "/api/export-stream","/api/ping","/api/prices/list","/api/desktop/status","/api/ledger","/api/budget"];

@@ -1,10 +1,11 @@
 """Synthetic-fixture tests for the Gemini CLI adapter.
 
 Gemini sessions are replayed message stores: JSONL append, $set snapshots,
-$rewindTo and $patch mutations all update the same logical message map before
-usage is totaled. These tests pin the accounting semantics from SOURCES.md:
-cached is a subset of input, thoughts are separate reasoning output, and
-rewound or patched-away messages must not be counted.
+$rewindTo and $patch mutations update the same logical message map. Accounting
+is append-only: a rewind or a display snapshot only changes conversation state,
+never the usage already billed for a message. These tests pin the semantics
+from SOURCES.md: cached is a subset of input, thoughts are separate reasoning
+output, and rewound/patched-away messages keep their usage.
 """
 from __future__ import annotations
 
@@ -85,35 +86,36 @@ class GeminiCliAdapterTests(unittest.TestCase):
         self.assertTrue(r.event_id.startswith("gemini-cli:"))
         r.validate()
 
-    def test_rewind_to_earlier_message_drops_later_usage(self):
-        # $rewindTo removes the target message and everything after it.
+    def test_rewind_to_earlier_message_keeps_billed_usage(self):
+        # $rewindTo removes the target message and everything after it from the
+        # conversation, but the API calls were already billed.
         path = self.dir.write("session.jsonl", [
             gemini_message("m1", 100, 20),
             gemini_message("m2", 500, 80),
             {"$rewindTo": "m2"},
         ])
         records = self.parse(path)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0].session, "session")
-        self.assertEqual(records[0].input, 100)
+        self.assertEqual(sorted(r.input for r in records), [100, 500])
+        self.assertTrue(all(r.session == "session" for r in records))
 
-    def test_rewind_to_unknown_id_clears_session(self):
+    def test_rewind_to_unknown_id_keeps_billed_usage(self):
         path = self.dir.write("session.jsonl", [
             gemini_message("m1", 100, 20),
             {"$rewindTo": "missing"},
         ])
-        self.assertEqual(self.parse(path), [])
+        records = self.parse(path)
+        self.assertEqual([r.input for r in records], [100])
 
-    def test_patch_remove_ids_drops_usage(self):
+    def test_patch_remove_ids_keeps_billed_usage(self):
         path = self.dir.write("session.jsonl", [
             gemini_message("m1", 100, 20),
             gemini_message("m2", 500, 80),
             {"$patch": {"removeIds": ["m2"]}},
         ])
         records = self.parse(path)
-        self.assertEqual([r.input for r in records], [100])
+        self.assertEqual(sorted(r.input for r in records), [100, 500])
 
-    def test_set_snapshot_replaces_messages(self):
+    def test_set_snapshot_keeps_billed_usage(self):
         path = self.dir.write("session.jsonl", [
             gemini_message("m1", 100, 20),
             {"$set": {"sessionId": "live-session",
@@ -121,7 +123,8 @@ class GeminiCliAdapterTests(unittest.TestCase):
             gemini_message("m3", 50, 10),
         ])
         records = self.parse(path)
-        self.assertEqual(sorted(r.input for r in records), [50, 700])
+        # m1 was billed before the snapshot and must survive it.
+        self.assertEqual(sorted(r.input for r in records), [50, 100, 700])
         self.assertTrue(all(r.session == "live-session" for r in records))
 
     def test_duplicate_message_id_replayed_keeps_last(self):

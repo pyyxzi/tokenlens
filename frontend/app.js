@@ -32,6 +32,9 @@
     scanAbort: null,
     scanState: null,
     autoTimer: null, drawerOpen: false, lastLoad: 0,
+    // 会话抽屉的请求序号：快速连点会话时只允许最后一条响应落地，
+    // closeDrawer 也会 +1 使在途请求失效。
+    sessionRequest: 0,
     dashboardCache: new Map(), dashboardAbort: null, dashboardRequest: 0,
     themePreference: null,
     // 启动语言：**只认后端 config.json**，不读 localStorage。
@@ -1480,7 +1483,7 @@
     const full = String(value || fallback || (isEn() ? 'Unassigned' : '未标注项目'));
     const clean = full.replace(/\\/g, '/').replace(/\/$/, '');
     const name = clean.split('/').filter(Boolean).pop() || full;
-    return `<span class="data-identity" title="${esc(full)}"><b>${esc(name)}</b>${full !== name ? `<small>${esc(full)}</small>` : ''}</span>`;
+    return `<span class="data-identity" data-no-translate title="${esc(full)}"><b>${esc(name)}</b>${full !== name ? `<small>${esc(full)}</small>` : ''}</span>`;
   }
   function toolNames(values) {
     return (values || []).map(key => toolName(S.data?.tool_meta?.[key], key)).join(' · ');
@@ -1630,7 +1633,7 @@
         <th class="cell-actions">${isEn() ? 'Actions' : '操作'}</th></tr></thead><tbody>`;
     shown.forEach((m, i) => {
       html += `<tr>
-        <td class="cell-identity"><span class="data-identity" title="${esc(m.model)}"><b>${esc(m.model)}</b><small>${esc(toolNames(m.tool_list))}</small></span></td>
+        <td class="cell-identity" data-no-translate><span class="data-identity" title="${esc(m.model)}"><b>${esc(m.model)}</b><small>${esc(toolNames(m.tool_list))}</small></span></td>
         <td class="num"><strong>${fmtExact(m.total)}</strong><small class="share-caption">${Number(m.share || 0).toFixed(2)}% <i style="--share:${Math.min(100, m.share || 0)}%"></i></small></td>
         <td class="num"><span class="data-pair"><b>${fmtExact(m.input)}</b><small>${isEn() ? 'Out' : '输出'} ${fmtExact(m.output)}</small></span></td>
         <td class="num">${cacheCell(m)}</td>
@@ -1686,8 +1689,19 @@
           page.cacheKey = `${epoch}:${page.page}:${page.size}`;
         } catch (error) {
           if (request === page.request && epoch === S.epoch) {
-            delete S.rendered.ledger;
+            // 计费明细失败时「按模型」整体算未完成：离开再回来要重新请求。
+            delete S.rendered.models;
+            page.cacheKey = null;
             toast((isEn() ? 'Ledger failed: ' : '计费明细加载失败：') + error.message, 'err');
+            t.innerHTML = `<tbody><tr><td colspan="7" class="mut" style="text-align:center;padding:26px 12px">${isEn()
+              ? 'Unable to load the billing ledger.'
+              : '计费明细加载失败。'} <button type="button" class="btn btn-ghost btn-xs" data-ledger-retry>${isEn() ? 'Retry' : '重试'}</button></td></tr></tbody>`;
+            t.onclick = (event) => {
+              if (event.target.closest('[data-ledger-retry]')) renderLedger();
+            };
+            for (const suffix of ['PagerTop', 'Pager']) {
+              const pager = document.getElementById(t.id + suffix); if (pager) pager.hidden = true;
+            }
           }
           return;
         } finally {
@@ -1759,7 +1773,7 @@
       const pv = (v) => (known || partial ? price(v) : '—');
       const av = (v) => (known || partial ? amt(v) : '—');
       html += `<tr class="lg-row">
-        <td><button class="lg-edit" data-model="${esc(it.model)}" title="${isEn()
+        <td><button class="lg-edit" data-model="${esc(it.model)}" data-no-translate title="${isEn()
             ? 'Edit unit price for this model'
             : '编辑该模型的单价'}"><b>${esc(it.model)}</b></button>${warn}
           <div class="lg-total">${isEn() ? 'Total' : '合计'} ${fmtExact(it.tokens)} tokens</div><small class="ledger-cache" title="${esc(window.TLUsage.cacheTitle(b, isEn()))}">${isEn() ? 'Cache hit' : '缓存命中'} ${window.TLUsage.cacheLabel(b, isEn())}</small></td>
@@ -1965,7 +1979,7 @@
         <th class="cell-actions">${isEn() ? 'Actions' : '操作'}</th></tr></thead><tbody>`;
     shown.forEach((p, i) => {
       html += `<tr>
-        <td class="cell-identity">${identityPath(p.project)}<small class="identity-tools" title="${esc(toolNames(p.tool_list))}">${esc(toolNames(p.tool_list))}</small></td>
+        <td class="cell-identity" data-no-translate>${identityPath(p.project)}<small class="identity-tools" title="${esc(toolNames(p.tool_list))}">${esc(toolNames(p.tool_list))}</small></td>
         <td class="num"><strong>${fmtExact(p.total)}</strong><small class="share-caption">${Number(p.share || 0).toFixed(2)}% <i style="--share:${Math.min(100, p.share || 0)}%"></i></small></td>
         <td class="num"><span class="data-pair"><b>${fmtExact(p.input)}</b><small>${isEn() ? 'Out' : '输出'} ${fmtExact(p.output)}</small></span></td>
         <td class="num">${cacheCell(p)}</td>
@@ -1994,7 +2008,7 @@
       const fields=[['input',isEn()?'Input':'输入'],['output',isEn()?'Output':'输出'],
         ['cache_read',isEn()?'Cache read':'缓存读'],['requests',isEn()?'Calls':'调用']];
       html+=`<tr class="clickable" tabindex="0" data-session-index="${i}" title="${isEn()?'Open session details':'查看会话详情'}">
-        <td class="session-identity"><code>${esc(s.session || '—')}</code><span class="chip"><span class="sw" style="background:${m.color || ROLE.total()}"></span>${esc(toolName(m,s.tool))}</span>
+        <td class="session-identity" data-no-translate><code>${esc(s.session || '—')}</code><span class="chip"><span class="sw" style="background:${m.color || ROLE.total()}"></span>${esc(toolName(m,s.tool))}</span>
           <div class="session-models" data-no-countup>${esc((s.model_list || '').split(',').filter(Boolean).join(' · '))}</div></td>
         <td class="session-project">${identityPath(s.project)}</td>
         <td class="session-usage"><div>${fields.map(([key,label])=>`<span class="session-metric"><span>${label}</span><b data-countup>${fmtExact(s[key])}</b></span>`).join('')}</div><span class="inline-cache" title="${esc(window.TLUsage.cacheTitle(s, isEn()))}">${isEn() ? 'Cache hit' : '缓存命中'} <b>${window.TLUsage.cacheLabel(s, isEn())}</b><small>${averageLabel(s)} / ${isEn() ? 'call' : '次'}</small></span></td>
@@ -2075,8 +2089,8 @@
       const costKind=({actual:isEn()?'Actual':'实付',estimated:isEn()?'Estimated':'估算',free:isEn()?'Free':'免费',unknown:isEn()?'Unpriced':'未定价'})[x.cost_kind] || '';
       html += `<tr ${x.session ? 'class="clickable" tabindex="0"' : ''} data-record-index="${i}" title="${x.session?(isEn()?'Open session details':'查看会话详情'):''}">
         <td data-label="${labels.time}" class="rec-time">${dtime(x.ts)}</td>
-        <td data-label="${labels.tool}" class="rec-identity"><span class="chip"><span class="sw" style="background:${m.color || ROLE.total()}"></span>${esc(toolName(m, x.tool))}</span>${C.model?`<span class="rec-model" data-no-countup>${esc(x.model || '—')}</span>`:''}</td>
-        ${C.project || C.source ? `<td data-label="${labels.project}" class="rec-project">${C.project ? identityPath(x.project) : ''}${C.source?`<small class="rec-source" title="${esc(x.src || '')}">${esc((x.src || '').split(/[\\/]/).pop())}</small>`:''}</td>`:''}
+        <td data-label="${labels.tool}" class="rec-identity"><span class="chip"><span class="sw" style="background:${m.color || ROLE.total()}"></span>${esc(toolName(m, x.tool))}</span>${C.model?`<span class="rec-model" data-no-translate data-no-countup>${esc(x.model || '—')}</span>`:''}</td>
+        ${C.project || C.source ? `<td data-label="${labels.project}" class="rec-project">${C.project ? identityPath(x.project) : ''}${C.source?`<small class="rec-source" data-no-translate title="${esc(x.src || '')}">${esc((x.src || '').split(/[\\/]/).pop())}</small>`:''}</td>`:''}
         ${hasUsage ? `<td data-label="${labels.usage}" class="rec-usage"><div>${usage.join('')}</div></td>`:''}
         ${C.total || C.cost ? `<td data-label="${labels.totals}" class="rec-totals">${C.total?`<strong data-countup>${fmtExact(x.total)}</strong>`:''}${C.cost?`<span class="rec-cost" title="${esc([x.cost_source,x.price_version].filter(Boolean).join(' · '))}"><b title="${esc(money(x.cost || 0))}" data-countup>${x.cost_kind==='unknown'?(isEn()?'Unpriced':'未定价'):displayMoney(x.cost || 0)}</b><small>${esc(costKind)}</small></span>`:''}</td>`:''}
       </tr>`;
@@ -2384,13 +2398,14 @@
         <div class="src-actions"><button class="btn btn-ghost btn-xs src-rescan" type="button" data-source-scan="${esc(s.id)}" ${S.scanRunning ? 'disabled' : ''}><i class="ico i-refresh"></i>${en ? 'Rescan source' : '重扫此来源'}</button></div>`;
       cards.push(card);
     });
-    chunkMount(host, cards, undefined, () => animateNumericElements(host));
-
-    /* 未安装的来源：收敛成紧凑列表，避免刷屏 */
+    /* 未安装的来源：收敛成紧凑列表，避免刷屏。
+       卡片要在 chunkMount 清空容器前建好，并等最后一批来源卡片挂载完再追加，
+       否则汇总卡会插到卡片网格中间。 */
     const missing = src.filter((x) => x.status === 'missing');
+    let missingBox = null;
     if (missing.length) {
-      const box = el('div', 'src-card src-missing');
-      box.innerHTML = `
+      missingBox = el('div', 'src-card src-missing');
+      missingBox.innerHTML = `
         <div class="src-head">
           <div class="tool-glyph" style="width:30px;height:30px;flex:0 0 30px;font-size:13px;
             background:linear-gradient(140deg,#64748b,#475569)">—</div>
@@ -2406,8 +2421,11 @@
         <div class="miss-chips">
           ${missing.map((x) => `<span class="chip"><span class="src-mini-icon">${window.TLSourceIcons?window.TLSourceIcons.html(x.id,x.glyph):''}</span>${esc(srcName(x))}</span>`).join('')}
         </div>`;
-      host.appendChild(box);
     }
+    chunkMount(host, cards, undefined, () => {
+      if (missingBox) host.appendChild(missingBox);
+      animateNumericElements(host);
+    });
 
     /* 重要提示：哪些来源没有计入合计 */
     const excluded = src.filter((x) => x.status!=='missing' && (x.included === false || x.included == null));
@@ -2871,10 +2889,13 @@
      ====================================================================== */
   async function openSession(session, tool, project, scope = null) {
     if (!session) return;
+    const request = ++S.sessionRequest;
     const mask = $('#drawerMask'), dr = $('#drawer');
     S.drawerOpen = true;
     mask.classList.add('on'); dr.classList.add('on');
-    $('#drawerTitle').textContent = '会话详情';
+    $('#drawerTitle').setAttribute('data-no-translate', '');
+    $('#drawerSub').setAttribute('data-no-translate', '');
+    $('#drawerTitle').textContent = isEn() ? 'Session details' : '会话详情';
     $('#drawerSub').textContent = session;
     $('#drawerBody').innerHTML = '<div class="spin" style="margin-top:40px"></div>';
     try {
@@ -2890,14 +2911,18 @@
         }
       }
       const d = await api('/api/session?' + q.toString());
+      // 慢响应可能属于上一次点击（或抽屉已关闭），直接丢弃。
+      if (request !== S.sessionRequest) return;
       d.cost_basis = q.get('cost_basis');
       renderSessionDrawer(d);
     } catch (e) {
+      if (request !== S.sessionRequest) return;
       $('#drawerBody').innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
     }
   }
 
   function closeDrawer() {
+    S.sessionRequest++;
     S.drawerOpen = false;
     $('#drawerMask').classList.remove('on');
     $('#drawer').classList.remove('on');
@@ -2908,7 +2933,7 @@
     const meta = (S.data && S.data.tool_meta || {})[d.tool] || {};
     const rate = (S.data && S.data.config.usd_to_cny) || 7.2;
     const body = $('#drawerBody');
-    $('#drawerTitle').textContent = d.project || '会话详情';
+    $('#drawerTitle').textContent = d.project || (isEn() ? 'Session details' : '会话详情');
     $('#drawerSub').innerHTML = `${esc(toolName(meta, d.tool))} · <span data-countup>${isEn() ? `${d.records} records` : `${d.records} 条记录`}</span>`;
     const maxDay = Math.max(1, ...(d.daily || []).map((x) => x.total));
     const maxTurn = Math.max(1, ...(d.turns || []).map((x) => x.total));
@@ -2938,7 +2963,7 @@
         <th class="num">${isEn() ? 'Calls' : '调用'}</th><th class="num">${isEn() ? 'Cost' : '成本'}</th>
         <th style="width:96px">${isEn() ? 'Share' : '占比'}</th></tr></thead>
         <tbody>${(d.models || []).map((m) => `
-          <tr><td>${esc(m.model)}</td><td class="num">${fmtExact(m.total)}</td>
+          <tr><td data-no-translate>${esc(m.model)}</td><td class="num">${fmtExact(m.total)}</td>
           <td class="num mut">${fmtExact(m.requests)}</td><td class="num" title="${esc(money(m.cost, rate))}">${displayMoney(m.cost)}</td>
           <td><div class="bar-mini"><i style="width:${m.total / Math.max(1, d.total) * 100}%;
             background:linear-gradient(90deg,${ROLE.total()},${ROLE.output()})"></i></div></td></tr>`).join('')}
@@ -2949,7 +2974,7 @@
         <div class="turn">
           <div class="turn-top">
             <span class="turn-time">${dtime(t.ts)}</span>
-            <span class="turn-model">${esc(t.model || '—')}</span>
+            <span class="turn-model" data-no-translate>${esc(t.model || '—')}</span>
             <span class="turn-total">${fmtExact(t.total)}</span>
           </div>
           <div class="turn-bar"><i style="width:${Math.max(2, t.total / maxTurn * 100)}%"></i></div>
@@ -3333,20 +3358,35 @@
   }
   function iqRenderHtml() {
     const ok = !!IQ.html;
+    // iframe 的 srcdoc 继承父页面 CSP（script-src 'self'），而 sandbox 的
+    // opaque origin 又让 'self' 匹配不到任何资源：内联/外链脚本都不会执行。
+    // 不放宽 CSP，只如实说明"仅声明式 SVG 动画可播放"。
+    const scriptsBlocked = ok && /<script[\s>]/i.test(IQ.html);
+    const en = isEn();
     $('#iqPreview').hidden=!ok;
     $('#iqPreviewPlaceholder').hidden=ok;
-    $('#iqHtmlVerdict').textContent = ok ? '已生成' : '未生成';
-    $('#iqHtmlVerdict').className = 'iq-verdict ' + (ok ? 'ok' : '');
+    $('#iqHtmlVerdict').textContent = ok ? (scriptsBlocked ? (en ? 'Generated · scripts blocked' : '已生成 · 脚本受限') : (en ? 'Generated' : '已生成')) : (en ? 'Not generated' : '未生成');
+    $('#iqHtmlVerdict').className = 'iq-verdict' + (ok && !scriptsBlocked ? ' ok' : '');
     $('#iqHtmlOpen').disabled = !ok;
     if (ok) $('#iqPreview').srcdoc = IQ.html;
     else $('#iqPreview').srcdoc = '';
     iqSetNavState('pelican', ok ? '已生成' : '未生成', ok ? 'ok' : '');
+    const status = $('#iqPreviewStatus');
+    if (status) status.textContent = ok
+      ? (scriptsBlocked ? (en ? 'Declarative animation only' : '仅声明式动画') : (en ? 'Live preview' : '实时预览'))
+      : (en ? 'Fixed canvas' : '固定画布');
     const wrap = $('#iqAPelican');
     if (wrap) {
       wrap.hidden=!(IQ.htmlSource || IQ.html);
       const answer = $('.iq-answer', wrap), reason = $('.iq-reason', wrap);
       if (answer) answer.textContent = IQ.htmlSource || IQ.html || '模型未返回可渲染内容。';
-      if (reason) reason.textContent = ok ? '返回内容包含可渲染的 SVG，已加载到右侧预览。' : '返回内容未通过 SVG 可渲染性检查。';
+      if (reason) reason.textContent = ok
+        ? (scriptsBlocked
+            ? (en
+                ? 'The returned content contains a renderable SVG, but inline scripts are blocked by the application security policy. The preview only plays declarative animations (SMIL/CSS); script-driven animation cannot run.'
+                : '返回内容包含可渲染的 SVG，但内联脚本被应用安全策略阻止；预览只播放 SMIL/CSS 等声明式动画，脚本驱动的动画不会运行。')
+            : (en ? 'The returned content contains a renderable SVG and has been loaded into the preview.' : '返回内容包含可渲染的 SVG，已加载到右侧预览。'))
+        : (en ? 'The returned content failed the SVG renderability check.' : '返回内容未通过 SVG 可渲染性检查。');
     }
   }
   function iqSave() {
@@ -3888,9 +3928,9 @@
       <span>${r.probe_mode === 'models' ? (en ? 'Response time' : '响应耗时') : (en ? 'First response' : '首个响应')}</span><b data-countup>${ms ? ms + ' ms' : '—'}</b></div>`);
     met.push(`<div class="pl-metric${t.total_ms > 0 ? ' good' : ''}">
       <span>${en ? 'Total time' : '总耗时'}</span><b data-countup>${t.total_ms ? t.total_ms + ' ms' : '—'}</b></div>`);
-    met.push(`<div class="pl-metric"><span>${en ? 'HTTP status' : 'HTTP 状态'}</span><b>${r.http_status || '—'}</b></div>`);
+    met.push(`<div class="pl-metric"><span>${en ? 'HTTP status' : 'HTTP 状态'}</span><b>${esc(r.http_status || '—')}</b></div>`);
     met.push(`<div class="pl-metric"><span>${en ? 'Protocol' : '协议'}</span><b style="font-size:11px">${
-      protoLabel(r.protocol).split('（')[0]}</b></div>`);
+      esc(String(protoLabel(r.protocol) || '—').split('（')[0])}</b></div>`);
     if (r.model_echo) met.push(`<div class="pl-metric" style="min-width:auto">
       <span>${en ? 'Returned model' : '返回模型'}</span><b style="font-size:11px">${esc(r.model_echo)}</b></div>`);
     if (r.usage && (r.usage.input || r.usage.output)) {
@@ -3914,7 +3954,7 @@
     let attempts = '';
     if ((r.attempts || []).length > 1) {
       attempts = `<div class="pl-help" style="margin-top:8px">${en ? 'Request adaptation log: ' : '请求参数自适应记录：'}` +
-        r.attempts.map((a) => `${esc(a.variant)} → ${a.status || a.error || (en ? 'failed' : '失败')}`).join(en ? '; ' : '；') +
+        r.attempts.map((a) => `${esc(a.variant)} → ${esc(a.status || a.error || (en ? 'failed' : '失败'))}`).join(en ? '; ' : '；') +
         '</div>';
     }
     const diagnostic = [
@@ -4473,6 +4513,20 @@
     $('#kpis').innerHTML = `<div class="skeleton sk-kpis"></div>`;
   }
 
+  /* 首次加载失败：骨架屏必须换成可操作的错误态，否则首页会永远空白。 */
+  function showLoadError(message) {
+    if (S.data) return;
+    const host = $('#kpis');
+    if (!host) return;
+    host.innerHTML = `<div class="card" style="grid-column:1/-1;padding:22px 18px;text-align:center">
+      <div class="mut">${isEn() ? 'Could not load dashboard data.' : '数据加载失败，暂时无法显示总览。'}</div>
+      ${message ? `<div class="mut" style="font-size:12px;margin-top:4px">${esc(message)}</div>` : ''}
+      <button type="button" class="btn btn-primary btn-xs" style="margin-top:12px" data-retry-load>${isEn() ? 'Retry' : '重试'}</button>
+    </div>`;
+    const retry = $('[data-retry-load]', host);
+    if (retry) retry.onclick = () => { showSkeleton(); load(false, true); };
+  }
+
   /* 键盘快捷键 */
   function initKeys() {
     const isTyping = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
@@ -4768,7 +4822,8 @@
     host._mountTicket = ticket;
     let i = 0;
     const total = nodes.length;
-    if (!total) return;
+    // 空批次也要回调：调用方可能靠 onDone 追加固定尾部节点（如"未安装"汇总卡）。
+    if (!total) { if (onDone) onDone(); return; }
     const step = () => {
       if (!host.isConnected || host._mountTicket !== ticket) return;
       const t0 = performance.now();
@@ -4949,8 +5004,10 @@
       cacheDashboard(range, data);
       applyDashboard(data);
     } catch (e) {
-      if (e.name !== 'AbortError' && !silent && request === S.dashboardRequest) {
-        toast('数据加载失败：' + e.message, 'err');
+      if (e.name !== 'AbortError' && request === S.dashboardRequest) {
+        if (!silent) toast('数据加载失败：' + e.message, 'err');
+        // 没有旧数据可展示时，骨架屏必须变成错误卡片 + 重试入口。
+        if (!S.data) showLoadError(e.message);
       }
     } finally {
       if (request === S.dashboardRequest) {
@@ -5404,12 +5461,27 @@
 
   async function startScan(force, sourceId) {
     const st = $('#scanState');
+    const wasRunning = !!S.scanRunning;
     st.classList.add('busy');
     S.scanRunning = true;
     $('#scanText').textContent = sourceId ? `正在启动 ${sourceId} 扫描…` : '正在启动扫描…';
-    stopScanStream();
     try {
-      await api('/api/scan', { method: 'POST', body: { force: !!force, source_id: sourceId || '' } });
+      const res = await api('/api/scan', { method: 'POST', body: { force: !!force, source_id: sourceId || '' } });
+      // 后端在已有扫描运行时返回 200 + started:false：这一轮并没有启动，
+      // 不能把界面装成"已开始"，否则强制重扫/单源重扫会静默不执行。
+      if (res && res.started === false) {
+        S.scanRunning = wasRunning;
+        clearTimeout(S.timer);
+        if (!wasRunning) {
+          st.classList.remove('busy');
+          $('#scanText').textContent = isEn() ? 'A scan is already running' : '已有扫描正在进行';
+          api('/api/scan/status').then((s) => applyScanState(s, !s.running)).catch(() => {});
+        }
+        toast('已有扫描正在进行', 'warn');
+        return;
+      }
+      // 确认新扫描真的启动了才断开上一条进度流并开始跟随。
+      stopScanStream();
       clearTimeout(S.timer);
       pollScan();
     } catch (err) {
@@ -5903,6 +5975,25 @@
     };
     $('#resetBtn').onclick = async () => {
       if (!(await confirmDialog('确定清空本地索引吗？原始日志不会被删除，重新扫描即可恢复。', { danger: true }))) return;
+      // 扫描 worker 会在 reset 之后继续发布记录，导致索引"部分复活"。
+      // 先取消并等它真正停下；停不下来就放弃本次重置。
+      if (S.scanRunning) {
+        try { await api('/api/scan/cancel', { method: 'POST', body: {} }); } catch (_) { /* 可能刚好结束 */ }
+        clearTimeout(S.timer);
+        stopScanStream();
+        let stopped = false;
+        for (let i = 0; i < 25 && !stopped; i++) {
+          try {
+            const s = await api('/api/scan/status');
+            if (!s.running) { stopped = true; applyScanState(s, true); }
+          } catch (_) { /* 状态查询失败时继续等下一轮 */ }
+          if (!stopped) await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+        if (!stopped) {
+          toast(isEn() ? 'A scan is still running; try again after it stops' : '扫描仍在进行，请稍后再试', 'err');
+          return;
+        }
+      }
       await api('/api/reset', { method: 'POST', body: {} });
       toast('索引已清空', 'ok');
       startScan(true);

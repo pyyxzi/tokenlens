@@ -12,16 +12,33 @@ def _secrets(value):
     return tuple(dict.fromkeys(item for item in (value or ()) if isinstance(item, str) and item))
 
 
+# 比这更短的 secret 只做整值匹配：作为子串会命中普通文本（例如 Key "k"
+# 会把 "ok" 里的 k 当成凭据），既毁掉响应也会误伤正文。
+_SHORT_SECRET = 4
+
+
 def _forms(secret):
-    raw = secret.encode('utf-8')
+    """A secret's common encodings.
+
+    JSON 字符串允许孤立 UTF-16 代理项（如 "\\ud800"），而 str.encode('utf-8')
+    会抛 UnicodeEncodeError。这里用 errors='replace' 生成编码形式，原字符串
+    仍参与精确匹配，脱敏路径绝不因输入而中断。
+    """
+    try:
+        raw = secret.encode('utf-8')
+        plain = secret
+    except UnicodeError:
+        raw = secret.encode('utf-8', 'replace')
+        plain = None
     encoded = ''.join('%%%02X' % byte for byte in raw)
     double = urllib.parse.quote(encoded, safe='')
     standard = base64.b64encode(raw).decode()
     urlsafe = base64.urlsafe_b64encode(raw).decode()
-    return tuple(dict.fromkeys((secret, urllib.parse.quote(secret, safe=''),
-                               urllib.parse.quote_plus(secret), encoded,
-                               double, urllib.parse.quote(double, safe=''),
-                               standard, standard.rstrip('='), urlsafe, urlsafe.rstrip('='))))
+    forms = [secret, encoded, double, urllib.parse.quote(double, safe=''),
+             standard, standard.rstrip('='), urlsafe, urlsafe.rstrip('=')]
+    if plain is not None:
+        forms.extend((urllib.parse.quote(plain, safe=''), urllib.parse.quote_plus(plain)))
+    return tuple(dict.fromkeys(form for form in forms if form))
 
 
 def contains_secret(value, secrets):
@@ -39,20 +56,29 @@ def contains_secret(value, secrets):
 
 
 def sanitize_public(value, secrets):
-    """Redact known credentials, including percent/base64 encoded echoes."""
+    """Redact known credentials, including percent/base64 encoded echoes.
+
+    dict 的键是响应结构而不是数据，永远不参与脱敏——短 Key 曾经把 "ok"
+    改写成 "o[redacted]"，让前端拿不到成功标记。短于 4 字符的 secret 只
+    做整值匹配，避免把普通文本中的同名字符当成凭据。
+    """
     secrets = _secrets(secrets)
     if isinstance(value, str):
         for secret in secrets:
+            if len(secret) < _SHORT_SECRET:
+                if value == secret:
+                    return '[redacted]'
+                continue
             for form in sorted(_forms(secret), key=len, reverse=True):
                 if form:
                     if '%' in form:
                         value = re.sub(re.escape(form), '[redacted]', value, flags=re.I)
                     else:
                         value = value.replace(form, '[redacted]')
-        return '[redacted]' if contains_secret(value, secrets) else value
+        long_secrets = tuple(secret for secret in secrets if len(secret) >= _SHORT_SECRET)
+        return '[redacted]' if contains_secret(value, long_secrets) else value
     if isinstance(value, dict):
-        return {sanitize_public(key, secrets) if isinstance(key, str) else key:
-                sanitize_public(item, secrets) for key, item in value.items()}
+        return {key: sanitize_public(item, secrets) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [sanitize_public(item, secrets) for item in value]
     return value

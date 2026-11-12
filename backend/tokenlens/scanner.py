@@ -18,6 +18,23 @@ from .models import SourceReport, Status, now_ts
 from .incremental_logs import JsonlPlan, supported as incremental_supported
 
 
+def _volume_available(path: str) -> bool:
+    """False when the drive/share holding ``path`` is currently unavailable.
+
+    A disconnected removable or network volume makes every indexed file fail
+    ``os.stat`` with FileNotFoundError, which looks identical to deletion.
+    Checking the volume root lets the scanner keep history instead of pruning
+    it as if the files were removed.
+    """
+    try:
+        drive, _ = os.path.splitdrive(os.path.abspath(path))
+        if drive:
+            return os.path.exists(drive + os.sep)
+    except OSError:
+        return False
+    return True
+
+
 class ScanState:
     def __init__(self):
         self.lock = threading.RLock()
@@ -97,6 +114,14 @@ class Scanner:
             if quick is not None:
                 self.cfg.set("codex_quick", bool(quick))
             target = str(source_id or "").strip()
+            if target:
+                excluded = set(self.cfg.get("exclude_tools") or [])
+                known_ids = {cls.id for cls in A.ADAPTER_CLASSES}
+                if target in excluded or target not in known_ids:
+                    # Validate before announcing a running scan: otherwise the
+                    # API returns started=true and only the worker reports the
+                    # error a moment later.
+                    raise ValueError("unknown or excluded source: " + target)
             self._begin_state(target)
             try:
                 t = threading.Thread(target=self._run, args=(force, target, True), daemon=True,
@@ -143,6 +168,24 @@ class Scanner:
             self._thread.join(timeout)
         return not self.state.running
 
+    def _reconcile_codex_mode(self):
+        """Drop the other Codex representation when the scan mode changes.
+
+        Quick mode stores one aggregate row per thread from ``state_*.sqlite``;
+        full mode stores per-call rollout rows. They describe the same usage,
+        so switching modes must replace the previous representation instead of
+        stacking the two (rollout rows + aggregate rows = ~2x tokens).
+        """
+        if not any(ad.id == "codex" for ad in self.adapters):
+            return
+        mode = "quick" if self.cfg.get("codex_quick") else "full"
+        previous = self.store.kv_get("codex_scan_mode")
+        if previous == mode:
+            return
+        if previous:
+            self.store.purge_tool("codex")
+        self.store.kv_set("codex_scan_mode", mode)
+
     # ------------------------------------------------------------------
     def _run(self, force: bool, source_id: str = "", initialized: bool = False):
         st = self.state
@@ -158,6 +201,7 @@ class Scanner:
                              if a.id not in exclude and (not source_id or a.id == source_id)]
             if source_id and not self.adapters:
                 raise ValueError("unknown or excluded source: " + source_id)
+            self._reconcile_codex_mode()
             previous = {r["id"]: r for r in self.store.list_sources()}
             known_files = self.store.query("SELECT path,tool FROM files")
             reports, alive, complete, candidates = {}, {}, set(), []
@@ -181,21 +225,33 @@ class Scanner:
                 alive[ad.id] = set()
                 try:
                     files = list(dict.fromkeys(os.path.abspath(p) for p in ad.enumerate()))
+                    indexed = [r for r in known_files if r["tool"] == ad.id]
+                    volume_missing = False
                     # An inaccessible directory can look empty to glob(). Existing
                     # previously-indexed files must not be interpreted as deletion.
-                    if not files and any(r["tool"] == ad.id and os.path.exists(r["path"]) for r in known_files):
-                        raise OSError("source discovery returned no files although indexed files still exist")
-                    if getattr(ad, "enumeration_complete", True):
+                    if not files:
+                        if any(os.path.exists(r["path"]) for r in indexed):
+                            raise OSError("source discovery returned no files although indexed files still exist")
+                        if any(not _volume_available(r["path"]) for r in indexed):
+                            volume_missing = True
+                            fail(ad, "source volume unavailable; history was retained")
+                    if volume_missing:
+                        pass
+                    elif getattr(ad, "enumeration_complete", True):
                         complete.add(ad.id)
                     else:
                         fail(ad, "file limit reached; discovery is incomplete and history was retained")
                     listed = set(files)
-                    for known in known_files:
-                        if known["tool"] != ad.id or known["path"] in listed:
+                    for known in indexed:
+                        if known["path"] in listed:
                             continue
                         try:
                             os.stat(known["path"])
                         except FileNotFoundError:
+                            if not _volume_available(known["path"]):
+                                complete.discard(ad.id)
+                                fail(ad, "source volume unavailable; history was retained")
+                                break
                             continue
                         except OSError:
                             pass
@@ -243,12 +299,18 @@ class Scanner:
                 ad, path, size, mtime, fingerprint = item
                 old = states.get(path)
                 fresh = old and old.get("fingerprint") == fingerprint
+                # SQLite sources are read with bounded queries, not loaded into
+                # memory. A large local database (e.g. ZCode's 600+ MB index)
+                # must not be skipped by the text-file size guard.
+                db_source = (path.lower().endswith((".db", ".sqlite", ".sqlite3", ".vscdb"))
+                             and hasattr(ad, "scan_db"))
+                limit_mb = 4096 if db_source else max_mb
                 if fresh and not force:
                     with st.lock:
                         st.done += 1
                         st.reused_files += 1
-                elif size > max_mb * 1024 * 1024:
-                    fail(ad, "file exceeds %d MB limit: %s" % (max_mb, os.path.basename(path)))
+                elif size > limit_mb * 1024 * 1024:
+                    fail(ad, "file exceeds %d MB limit: %s" % (limit_mb, os.path.basename(path)))
                     with st.lock:
                         st.done += 1
                 else:
@@ -308,7 +370,14 @@ class Scanner:
                         raise ValueError("%d malformed usage record(s); previous snapshot retained" % len(issues))
                     deps = ad.cache_dependencies(path) if hasattr(ad, "cache_dependencies") else ()
                     if A.file_fingerprint(path, deps) != fingerprint:
-                        raise OSError("source changed while parsing; retry on the next scan")
+                        # A live application database is expected to change
+                        # while we read it. Failing the whole file would drop
+                        # its usage until the next scan; the stored fingerprint
+                        # stays stale so the following scan reparses it, and
+                        # event-id dedupe keeps the retry idempotent.
+                        if not (path.lower().endswith((".db", ".sqlite", ".sqlite3", ".vscdb"))
+                                and hasattr(ad, "scan_db")):
+                            raise OSError("source changed while parsing; retry on the next scan")
                     old = states.get(path)
                     if (not count and size and old and old.get("records")
                             and not (ad.id == "claude-desktop" and os.path.basename(path).lower() == "audit.jsonl")):
@@ -377,6 +446,10 @@ class Scanner:
                         for args in dependent_writes:
                             save_result(*args)
                 except Exception as exc:
+                    if st.cancel_requested or isinstance(exc, (_ScanCancelled, InterruptedError)):
+                        # A cancellation during dependent publication must end
+                        # the scan as cancelled, not as a fake source error.
+                        raise _ScanCancelled() from exc
                     st.parsed_files, st.bytes_new, st.records = before
                     fail(dependent_writes[0][0], "dependent source update failed: " + str(exc))
             for ad in self.adapters:

@@ -184,6 +184,15 @@ class Aggregator:
         # 同一连接的另一个引用。注意 store.conn 是方法不是属性，忘了调用
         # 拿到的是绑定方法，用起来会以「'method' object is not ...」炸掉。
         self.conn = store.conn()
+        # 模型筛选/分组统一走这个归一化函数。真实 Store 在自己的连接上注册过，
+        # 但只读快照或测试用的轻量连接可能没有；这里补一次注册，保证
+        # `_model_clause` 在任何调用路径上都能执行。
+        try:
+            self.conn.create_function(
+                "tokenlens_model_key", 1,
+                lambda value: str(value or "").strip().lower(), deterministic=True)
+        except (AttributeError, TypeError, ValueError):
+            pass
         self.cfg = cfg
         self._memo_cache = OrderedDict()
         self._memo_sizes = {}
@@ -325,9 +334,12 @@ class Aggregator:
 
     @staticmethod
     def _model_clause(model):
+        # Grouping and filtering must use the same normalizer. SQLite's
+        # lower(trim()) only handles ASCII and spaces, so tab/newline or
+        # non-ASCII case variants used to disappear from drill-down results.
         if model == "未知模型":
-            return "COALESCE(trim(model),'') = ''", []
-        return "lower(trim(model)) = ?", [str(model).strip().lower()]
+            return "COALESCE(tokenlens_model_key(model),'') = ''", []
+        return "tokenlens_model_key(model) = ?", [str(model).strip().lower()]
 
     def _where(self, rng: str, tool: Optional[str] = None, model: Optional[str] = None):
         clauses, params = [], []
@@ -1157,6 +1169,20 @@ class Aggregator:
     # 会话详情（下钻抽屉）
     # ------------------------------------------------------------------
     def session_detail(self, session_id, tool=None, limit=300, project=None, rng="all"):
+        # The sessions view treats (tool, project, session) as the identity.
+        # A session id is only unique within one source/project in practice,
+        # so an unscoped request must resolve one identity instead of merging
+        # every tool's usage under an arbitrary label.
+        if not tool or project is None:
+            identities = self._q(
+                "SELECT tool, COALESCE(NULLIF(project,''),'(未标注)') AS project,"
+                " COUNT(*) AS n FROM records WHERE session = ? GROUP BY tool, project"
+                " ORDER BY n DESC, tool, project", (session_id,))
+            if identities:
+                if not tool:
+                    tool = identities[0]["tool"]
+                if project is None:
+                    project = identities[0]["project"]
         w, p = self._where(rng)
         w += " AND session = ?"
         p.append(session_id)
@@ -1164,8 +1190,8 @@ class Aggregator:
             w += " AND tool = ?"
             p.append(tool)
         if project is not None:
-            w += " AND COALESCE(project,'') = ?"
-            p.append("" if project == "(未标注)" else project)
+            w += " AND COALESCE(NULLIF(project,''),'(未标注)') = ?"
+            p.append(project)
         head = self._one(
             f"SELECT tool, COALESCE(NULLIF(project,''),'(未标注)') AS project,"
             f" COALESCE(SUM({TOTAL_EXPR}),0) AS total, COALESCE(SUM(input),0) AS input,"
@@ -1176,13 +1202,14 @@ class Aggregator:
             f" COUNT(*) AS records,COALESCE(SUM(CASE WHEN cost_kind='unknown' THEN 1 ELSE 0 END),0) AS unknown_records FROM records {w}", p)
         if not head or not head.get("records"):
             return None
+        model_key = "COALESCE(NULLIF(tokenlens_model_key(model),''),'未知模型')"
         models = self._q(
-            f"SELECT COALESCE(NULLIF(model,''),'未知模型') AS model,"
+            f"SELECT {model_key} AS model,"
             f" COALESCE(SUM({TOTAL_EXPR}),0) AS total, COALESCE(SUM(input),0) AS input,"
             f" COALESCE(SUM(output),0) AS output, COALESCE(SUM(cache_read),0) AS cache_read,"
             f" COALESCE(SUM(cache_write),0) AS cache_write, COALESCE(SUM(reasoning),0) AS reasoning,"
             f" COALESCE(SUM(requests),0) AS requests, COALESCE(SUM(cost),0) AS cost FROM records {w}"
-            f" GROUP BY model ORDER BY total DESC", p)
+            f" GROUP BY {model_key} ORDER BY total DESC", p)
         daily = self._q(
             f"SELECT day, COALESCE(SUM({TOTAL_EXPR}),0) AS total, COALESCE(SUM(input),0) AS input,"
             f" COALESCE(SUM(output),0) AS output, COALESCE(SUM(cache_read),0) AS cache_read,"

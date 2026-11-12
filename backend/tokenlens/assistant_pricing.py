@@ -476,9 +476,25 @@ def _number(value):
     return float(value)
 
 
+# Model names/version spans (Claude Sonnet 4.5, gpt-5.1, gemini-2.5-pro, o3 …)
+# are not price evidence. They are removed before numeric matching so a model
+# version like "4.5" cannot satisfy a 4.5 USD unit price.
+_MODEL_SPAN = re.compile(
+    r"\b(?:claude|sonnet|opus|haiku|gpt|chatgpt|gemini|gemma|llama|qwen|glm|kimi|"
+    r"moonshot|deepseek|grok|mistral|mixtral|command|nova|ernie|phi|minimax|"
+    r"hunyuan|mimo|o[134])"
+    r"(?:[\s./_-]*[a-z0-9]+){0,6}", re.I)
+
+
+def _strip_model_spans(text):
+    return _MODEL_SPAN.sub(" ", str(text or ""))
+
+
 def _has_number(text, value):
-    # A value must occur as an independent numeric token, not inside a model ID.
-    values = re.findall(r"(?<![\w.])(?:\d[\d,]*)(?:\.\d+)?(?![\w.])", text)
+    # A value must occur as an independent numeric token, not inside a model ID
+    # (e.g. the 4.5 in "Claude Sonnet 4.5") and not inside a word.
+    values = re.findall(r"(?<![\w.])(?:\d[\d,]*)(?:\.\d+)?(?![\w.])",
+                        _strip_model_spans(text))
     return any(abs(float(number.replace(",", "")) - value) < 1e-10 for number in values)
 
 
@@ -657,7 +673,7 @@ class PriceAssistant:
                 return saved.get("new_prices"), saved.get("currency"), saved.get("unit"), "catalog"
         if scope == "provider":
             return None, None, None, "none"
-        active = self.app.effective_prices().get(model.strip().lower())
+        active = self._active_prices().get(model.strip().lower())
         if active:
             return dict(zip(RATE_FIELDS, active["prices"])), "USD", "per_million_tokens", "estimate"
         builtin = pricing.builtin_price(model)
@@ -1115,8 +1131,31 @@ class PriceAssistant:
                 return value
         return None
 
+    def _active_prices(self):
+        """Active price versions, honouring Finance's effective_to window."""
+        finance = getattr(self.app, "finance", None)
+        if finance is not None and hasattr(finance, "effective_prices"):
+            return finance.effective_prices()
+        return self.app.effective_prices()
+
+    def _newer_price(self, model, source, candidate, now=None):
+        """Return the active version when it must win over this candidate.
+
+        Mirrors ``apply_saved``: a manual/other-source version always wins, and
+        a later assistant version wins over an older confirmation. ``now``
+        supplies the timestamp of the publication being attempted (the
+        candidate's own confirmation time) so replays are not self-blocking.
+        """
+        current = self._active_prices().get(str(model or "").strip().lower())
+        stamp = candidate.get("confirmed_at", 0) if now is None else now
+        if current and current["source"] not in (source, "legacy-override:unpriced") and (
+                not current["source"].startswith(("assistant-reference:", "assistant-official:"))
+                or (current.get("created_at") or 0) > stamp):
+            return current
+        return None
+
     def _basic_matches(self, candidate):
-        current = self.app.effective_prices().get(candidate["model"].strip().lower())
+        current = self._active_prices().get(candidate["model"].strip().lower())
         return bool(current and current.get("source") != "legacy-override:unpriced"
                     and current.get("prices") == [candidate["new_prices"][field] for field in RATE_FIELDS]
                     and (current.get("rules") or []) == (self._estimate_rules(candidate) or []))
@@ -1138,7 +1177,7 @@ class PriceAssistant:
             current = next((row for row in self.app.finance.prices()
                             if row["model"] == model and row["effective_from"] == effective), None)
         else:
-            current = self.app.effective_prices().get(model)
+            current = self._active_prices().get(model)
         if (current and current["source"] == source and current.get("prices") == rates
                 and (current.get("rules") or []) == rules):
             return current["id"]
@@ -1149,7 +1188,8 @@ class PriceAssistant:
         publish_day = max(effective, current["effective_from"]) if current and effective <= today else effective
         saver = self.app.finance.save_reference_price if rules or any(rate is None for rate in rates) else self.app.finance.save_price
         return saver({"model": model, "effective_from": publish_day, "prices": rates,
-                      "source": source, "rules": rules})["price"]["id"]
+                      "source": source, "rules": rules,
+                      "effective_to": candidate.get("effective_to")})["price"]["id"]
 
     @staticmethod
     def _estimate_rules(candidate):
@@ -1373,8 +1413,12 @@ class PriceAssistant:
             # A prior estimator failure (or subsequent manual override) must
             # not force another identical catalog revision merely to reapply it.
             for candidate, current, row in reapply:
+                source = "assistant-" + candidate["scope"] + ":" + current["id"] + " " + candidate["source_url"]
+                if self._newer_price(candidate["model"], source, candidate, now=int(time.time())):
+                    row["status"] = "newer-price"
+                    row["estimate_note"] = "当前价格存在较新的手动版本，保留当前设置"
+                    continue
                 try:
-                    source = "assistant-" + candidate["scope"] + ":" + current["id"] + " " + candidate["source_url"]
                     self._publish_estimate(candidate, source, today)
                     row["applied"] = True
                     result["applied"] += 1
@@ -1439,7 +1483,7 @@ class PriceAssistant:
                     db.execute("INSERT OR IGNORE INTO catalog_versions(id,preview_id,candidate_id,model,scope,provider,effective_from,created_at,payload) VALUES(?,?,?,?,?,?,?,?,?)",
                                (version_id, preview_id, candidate["id"], candidate["model"], candidate["scope"], candidate["provider"], effective, payload["confirmed_at"], _json(payload)))
                 response = {"ok": True, "saved": len(selected), "catalog_versions": [], "applied": [], "errors": [],
-                            "preview_id": preview_id, "effective_from": effective, "status": "applying",
+                            "skipped": [], "preview_id": preview_id, "effective_from": effective, "status": "applying",
                             "repriced_records": 0, "remaining_unknown_records": 0}
                 if previous and saved.get("status") == "confirmed":
                     response["duplicate"] = True
@@ -1448,12 +1492,19 @@ class PriceAssistant:
             # The durable catalog is written first. A failed estimator write can be retried
             # with the exact same confirmation. Replays reuse an active version,
             # but a source left only in history must be published again.
+            confirmed_at = int(time.time())
             for candidate in selected:
                 version_id = hashlib.sha256((preview_id + candidate["id"]).encode()).hexdigest()[:32]
                 response["catalog_versions"].append(version_id)
                 if candidate["id"] not in basic_ids and candidate["id"] not in estimate_ids:
                     continue
                 source = "assistant-" + candidate["scope"] + ":" + version_id + " " + candidate["source_url"]
+                # Never let a reference publication overwrite a newer manual
+                # price; the same guard protects fill's reapply loop.
+                if self._newer_price(candidate["model"], source, candidate, now=confirmed_at):
+                    response["skipped"].append({"candidate_id": candidate["id"],
+                                                "model": candidate["model"], "reason": "newer-price"})
+                    continue
                 try:
                     price_id = self._publish_estimate(candidate, source, effective, preview["expires_at"])
                     repriced = self.app.finance.reestimate_unknown(candidate["model"], price_id,
@@ -1524,10 +1575,7 @@ class PriceAssistant:
                     row.update(status="catalog-only", message="已保存价格含尚不支持的计费条件，无法应用于估算")
                     continue
                 source = "assistant-" + candidate["scope"] + ":" + candidate["id"] + " " + candidate["source_url"]
-                current = self.app.effective_prices().get(model.strip().lower())
-                if current and current["source"] not in (source, "legacy-override:unpriced") and (
-                        not current["source"].startswith(("assistant-reference:", "assistant-official:"))
-                        or current["created_at"] > candidate.get("confirmed_at", 0)):
+                if self._newer_price(model, source, candidate):
                     row.update(status="newer-price", message="当前价格存在较新的手动版本，保留当前设置")
                     continue
                 try:

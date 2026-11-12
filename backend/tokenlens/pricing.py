@@ -36,6 +36,7 @@ _BUILTIN_ALIASES = {
     "gpt-5.1-codex-max": "gpt-5.1",
     "gemini-3-pro": "gemini-3",
     "grok-code-fast": "grok-code",
+    "kimi-for-coding": "kimi",
     "claude-opus-4.5": "claude-opus-4",
     "claude-opus-4.6": "claude-opus-4",
     "claude-opus-4.7": "claude-opus-4",

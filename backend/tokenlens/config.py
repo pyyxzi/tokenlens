@@ -12,7 +12,7 @@ import copy
 
 APP_NAME = "TokenLens"
 APP_TAGLINE = "LOCAL TOKEN ANALYTICS"
-APP_VERSION = "1.2.6"
+APP_VERSION = "1.2.7"
 
 HOME = os.path.expanduser("~")
 _LOG = logging.getLogger("tokenlens.config")
@@ -278,5 +278,8 @@ class Config:
         return self.get(key)
 
 
-def db_path(cfg: Config) -> str:
+def db_path(cfg: Config = None) -> str:
+    """数据库跟随配置所在目录；未传配置时沿用全局数据目录。"""
+    if cfg is not None and getattr(cfg, "path", ""):
+        return os.path.join(os.path.dirname(os.path.abspath(cfg.path)), "index.db")
     return os.path.join(data_dir(), "index.db")

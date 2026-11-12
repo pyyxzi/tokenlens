@@ -176,10 +176,34 @@ def expand(path: str) -> str:
     return os.path.expandvars(os.path.expanduser(path))
 
 
+@contextlib.contextmanager
+def _open_text_source(path: str, encoding: str):
+    """Open a text log, transparently decompressing zstd-compressed JSONL.
+
+    Recent Codex CLI versions archive every rollout as ``.jsonl.zst``
+    (``sessions/YYYY/MM/DD`` and ``archived_sessions``).  Other adapters only
+    ever see plain text, so decompression is keyed on the extension and leaves
+    their path untouched.
+    """
+    lower = path.lower()
+    if lower.endswith((".zst", ".zstd")):
+        if _zstandard is None:
+            raise RuntimeError(
+                "zstd-compressed source cannot be read (zstandard missing): %s; "
+                "run `pip install zstandard` and rescan" % os.path.basename(path))
+        with io.open(path, "rb", buffering=1 << 20) as raw:
+            stream = _zstandard.ZstdDecompressor().stream_reader(raw)
+            with io.TextIOWrapper(stream, encoding=encoding, errors="strict") as text:
+                yield text
+    else:
+        with io.open(path, "r", encoding=encoding, errors="strict",
+                     buffering=1 << 20) as fh:
+            yield fh
+
+
 def iter_lines(path: str, encoding: str = "utf-8", limit: Optional[int] = None):
-    """流式按行读取，1MB 缓冲，二进制长行不会炸内存。"""
-    with io.open(path, "r", encoding=encoding, errors="strict",
-                 buffering=1 << 20) as fh:
+    """流式按行读取，1MB 缓冲，二进制长行不会炸内存；.jsonl.zst 自动解压。"""
+    with _open_text_source(path, encoding) as fh:
         idx = 0
         while True:
             if limit is not None and idx >= limit:
@@ -477,12 +501,16 @@ class CodexAdapter(Adapter):
     color = "#10a37f"
     glyph = "⟩"
     homepage = "https://github.com/openai/codex"
-    detail = "解析 Codex 会话的逐次调用用量，排除分支会话继承的历史；兼容旧版 token_count 日志"
+    detail = "解析 Codex 会话（含 .jsonl.zst 压缩与 archived_sessions）的逐次调用用量，排除分支会话继承的历史；兼容旧版 token_count 日志"
     INCREMENTAL_JSONL = True
+
+    def _home(self):
+        # Codex honours CODEX_HOME for relocated state directories.
+        return os.environ.get("CODEX_HOME") or os.path.join(HOME, ".codex")
 
     def _state_db(self):
         for name in ("state_5.sqlite", "state_4.sqlite", "state.sqlite"):
-            p = os.path.join(HOME, ".codex", name)
+            p = os.path.join(self._home(), name)
             if os.path.exists(p):
                 return p
         return ""
@@ -491,7 +519,14 @@ class CodexAdapter(Adapter):
         if self.cfg.get("codex_quick"):
             db = self._state_db()
             return [db] if db else []
-        return glob_files(os.path.join(HOME, ".codex", "sessions", "**", "rollout-*.jsonl"))
+        # Current Codex versions compress every rollout to .jsonl.zst and move
+        # archived threads under archived_sessions/. Matching only plain
+        # rollout-*.jsonl silently skipped the whole history on those installs.
+        patterns = []
+        for base in ("sessions", "archived_sessions"):
+            for name in ("rollout-*.jsonl", "rollout-*.jsonl.zst", "rollout-*.jsonl.zstd"):
+                patterns.append(os.path.join(self._home(), base, "**", name))
+        return glob_files(*patterns)
 
     def scan_db(self, path):
         """快速模式：直接读 state_*.sqlite 的 threads.tokens_used。"""
@@ -529,9 +564,13 @@ class CodexAdapter(Adapter):
         model = state.get("model", "codex")
         provider = state.get("provider", "")
         version = state.get("version", "")
-        # 会话 ID 可从文件名尾部取：rollout-2026-04-04T22-27-45-<uuid>.jsonl
+        # 会话 ID 可从文件名尾部取：rollout-2026-04-04T22-27-45-<uuid>.jsonl[.zst]
         base = os.path.basename(path)
-        parts = base.replace("rollout-", "").replace(".jsonl", "").split("-")
+        stem = base
+        for suffix in (".zst", ".zstd", ".jsonl", ".ndjson"):
+            if stem.lower().endswith(suffix):
+                stem = stem[:-len(suffix)]
+        parts = stem.replace("rollout-", "").split("-")
         session = state.get("session") or ("-".join(parts[-5:]) if len(parts) >= 5 else base)
         owner = state.get("owner", "")
         active_thread = state.get("active_thread", "")
@@ -726,6 +765,15 @@ class CodexAdapter(Adapter):
                         continue
                     if all(current[k] >= previous_totals[k] for k in token_keys):
                         use = {k: current[k] - previous_totals[k] for k in token_keys}
+                        # 累计值先下降再回升时，差值会把整段历史算进一轮。
+                        # 同时给出的 last_token_usage 是逐轮权威值，核心字段
+                        # 不一致就以它为准。
+                        if last:
+                            candidate = {k: (_i(last[k]) if k in last else use[k])
+                                         for k in token_keys}
+                            if any(candidate[k] != use[k]
+                                   for k in ("input_tokens", "cached_input_tokens", "output_tokens")):
+                                use = candidate
                     else:
                         # A compaction/reset starts a new counter segment.
                         use = last or current
@@ -762,12 +810,11 @@ class CodexAdapter(Adapter):
         return iter(())
 
     def scan_extra(self):
-        if self.cfg.get("codex_quick"):
-            return self._quick_from_db()
+        # Quick mode already enumerates state_*.sqlite itself; nothing extra.
         return []
 
     def probe(self):
-        p = os.path.join(HOME, ".codex")
+        p = self._home()
         return os.path.isdir(p), p
 
 
@@ -801,6 +848,30 @@ class GeminiCliAdapter(Adapter):
             except OSError:
                 project = ""
         messages = {}
+        # Usage is an append-only ledger. Gemini periodically rewrites
+        # $set.messages with a display snapshot that may omit already-billed
+        # assistant messages; clearing the snapshot must never erase their
+        # tokens from the accounting total.
+        usage = {}
+        def remember_usage(message):
+            if not isinstance(message, dict):
+                return
+            if not isinstance(message.get("tokens"), dict):
+                return
+            if message.get("type") not in ("gemini", None):
+                return
+            identifier = str(message.get("id") or hashlib.sha256(json.dumps(message, sort_keys=True, ensure_ascii=False).encode()).hexdigest())
+            entry = {key: message[key] for key in ("id", "type", "tokens", "model", "modelVersion", "timestamp", "lastUpdated") if key in message}
+            previous = usage.get(identifier)
+            if previous and isinstance(previous.get("tokens"), dict):
+                merged = dict(entry["tokens"])
+                for key, value in previous["tokens"].items():
+                    merged[key] = max(_i(merged.get(key)), _i(value))
+                entry["tokens"] = merged
+                for key in ("model", "modelVersion", "timestamp", "lastUpdated"):
+                    if not entry.get(key) and previous.get(key):
+                        entry[key] = previous[key]
+            usage[identifier] = entry
         def keep(message):
             if not isinstance(message, dict):
                 raise ValueError("invalid Gemini message")
@@ -809,6 +880,7 @@ class GeminiCliAdapter(Adapter):
                 raise ValueError("Gemini session exceeds 200,000 messages")
             # Keep only accounting fields, not potentially huge prompt bodies.
             messages[identifier] = {key: message[key] for key in ("id", "type", "tokens", "model", "modelVersion", "timestamp", "lastUpdated") if key in message}
+            remember_usage(message)
         if path.lower().endswith(".json"):
             with open(path, encoding="utf-8-sig") as stream:
                 doc = json.load(stream)
@@ -851,6 +923,7 @@ class GeminiCliAdapter(Adapter):
                         key = str(change.get("id", ""))
                         if key in messages:
                             messages[key].update({k: change[k] for k in ("tokens", "model", "timestamp") if k in change})
+                            remember_usage(messages[key])
                     order = patch.get("orderIds")
                     if isinstance(order, list):
                         messages = {**{str(key): messages[str(key)] for key in order if str(key) in messages},
@@ -859,7 +932,7 @@ class GeminiCliAdapter(Adapter):
                     keep(obj)
                 elif "sessionId" in obj:
                     session = str(obj["sessionId"] or session)
-        for identifier, o in messages.items():
+        for identifier, o in usage.items():
             t = o.get("tokens")
             if not isinstance(t, dict) or o.get("type") not in ("gemini", None):
                 continue
@@ -1303,8 +1376,14 @@ class OpenCodeAdapter(Adapter):
                 cr = _i(r.get("tokens_cache_read"))
                 cw = _i(r.get("tokens_cache_write"))
                 rs = _i(r.get("tokens_reasoning"))
-                actual = r.get("cost") is not None
-                cost = float(r["cost"]) if actual else estimate_cost(model, inp, out, cr, cw)
+                raw_cost = r.get("cost")
+                try:
+                    cost_value = float(raw_cost) if raw_cost is not None else 0.0
+                except (TypeError, ValueError):
+                    cost_value = 0.0
+                # A zero cost from the client is "unknown", not a real bill.
+                actual = raw_cost is not None and cost_value > 0
+                cost = cost_value if actual else estimate_cost(model, inp, out, cr, cw)
                 recs.append(UsageRecord(
                     tool=self.id, ts=to_epoch(r.get("time_created")),
                     model=str(model or label), project=norm_project(r.get("directory") or ""),
@@ -1791,21 +1870,19 @@ class KimiAdapter(Adapter):
             for r in unknown:
                 by_session.setdefault(r.session, []).append(r)
             for sid, recs in by_session.items():
-                seq = [r.total for r in recs]
-                cumulative = (len(seq) >= 3
-                              and all(seq[i] >= seq[i - 1] for i in range(1, len(seq)))
-                              and seq[-1] >= (seq[0] or 1) * 2 and seq[-1] > seq[0])
-                if not cumulative:
-                    turns.extend(recs)
-                    continue
                 labeled = turns_by_session.get(sid)
                 if labeled is None:
-                    # 本文件没有该会话的逐轮明细可对照：维持会话级语义取末值
-                    session_scoped.extend(recs)
-                elif seq[-1] >= 0.9 * sum(r.total for r in labeled):
-                    continue  # 覆盖了轮次总量的单调累计 = 镜像，丢弃
-                else:
+                    # 没有独立的逐轮明细可对照时，单调递增也可能只是上下文
+                    # 正常增长（每轮输入更大）。把它当累计镜像取末值会少计
+                    # 真实用量，因此保留全部记录。
                     turns.extend(recs)
+                    continue
+                seq = [r.total for r in recs]
+                monotonic = (len(seq) >= 3
+                             and all(seq[i] >= seq[i - 1] for i in range(1, len(seq))))
+                if monotonic and seq[-1] >= 0.9 * sum(r.total for r in labeled):
+                    continue  # 覆盖了轮次总量的单调累计 = 镜像，丢弃
+                turns.extend(recs)
 
         # 有轮次记录的会话只信轮次（会话级累计是镜像）；没有轮次明细的
         # 会话保留会话级末值，且按模型分别取——多模型会话各有各的累计。
@@ -2270,10 +2347,17 @@ class ClineFamilyAdapter(Adapter):
             if inp + out + cr + cw <= 0:
                 continue
             raw_cost = dig(obj, "cost", default=None)
-            actual = raw_cost is not None
-            cost = float(raw_cost) if actual else 0.0
+            try:
+                cost_value = float(raw_cost) if raw_cost is not None else 0.0
+            except (TypeError, ValueError):
+                cost_value = 0.0
+            # A zero from the client means "could not price this provider",
+            # not a verified free call. Only a positive report is authoritative.
+            actual = raw_cost is not None and cost_value > 0
+            cost = cost_value if actual else 0.0
             mdl = str(dig(obj, "modelInfo.modelId", default="") or model or "cline")
-            inp = max(0, inp - cr)
+            # Cline's tokensIn is the whole prompt, including both cache buckets.
+            inp = max(0, inp - cr - cw)
             if not actual:
                 cost = estimate_cost(mdl, inp, out, cr, cw)
             host = ""
@@ -2853,13 +2937,21 @@ class AiderAdapter(Adapter):
         except OSError:
             raise
         cur_model = "aider"
+        cur_ts = 0
         for line in text.splitlines():
             m = re.match(r"^#{2,4}\s+(.+)$", line.strip())
             if m and re.search(r"gpt|claude|gemini|deepseek|qwen|glm|o[13]|llama|mistral", m.group(1), re.I):
                 # 标题行常带日期时间前缀（"#### 2024-05-01 10:00 gpt-4o"）；
                 # 整行当模型名会让估价永远匹配不到，剥掉前缀只留模型部分。
+                heading = m.group(1)
+                stamp = re.match(r"^(\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:[\sT]\d{1,2}:\d{2}(?::\d{2})?)?)",
+                                 heading)
+                if stamp:
+                    parsed_ts = to_epoch(stamp.group(1))
+                    if parsed_ts:
+                        cur_ts = parsed_ts
                 name = re.sub(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}([\sT]\d{1,2}:\d{2}(:\d{2})?)?\s*",
-                              "", m.group(1)).strip()
+                              "", heading).strip()
                 if name:
                     cur_model = name
             mm = self._LINE.search(line)
@@ -2869,7 +2961,8 @@ class AiderAdapter(Adapter):
                 if inp + out <= 0:
                     continue
                 yield UsageRecord(
-                    tool=self.id, ts=to_epoch(int(os.path.getmtime(path))), model=cur_model,
+                    tool=self.id, ts=cur_ts or to_epoch(int(os.path.getmtime(path))),
+                    model=cur_model,
                     project=norm_project(os.path.dirname(path)), session=os.path.basename(path),
                     input=inp, output=out,
                     cost=estimate_cost(cur_model, inp, out), src=path,
@@ -2975,8 +3068,19 @@ class ApiLogAdapter(Adapter):
         for line in iter_lines(path, encoding="utf-8-sig"):
             if not line.strip():
                 continue
-            if path.lower().endswith((".jsonl", ".ndjson")) or line.lstrip().startswith(("{", "[")):
-                obj = json.loads(line)
+            structured = path.lower().endswith((".jsonl", ".ndjson"))
+            if structured or line.lstrip().startswith(("{", "[")):
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    # Gateway logs often prefix JSON with "[timestamp] ...".
+                    # A non-JSON bracket line must fall back to the text
+                    # scanner instead of failing the whole file.
+                    if structured:
+                        raise
+                    yield from self._from_text(
+                        line, path, to_epoch(self._match(self._TS, line, str)))
+                    continue
                 yield from self._from_object(obj, path)
             elif "usage" in line or "tokens" in line or "eval_count" in line:
                 yield from self._from_text(line, path, to_epoch(self._match(self._TS, line, str)))
@@ -3237,12 +3341,17 @@ class _VendorScanAdapter(Adapter):
     # ---------------- 解析 ----------------
     @staticmethod
     def _tok_cols(cols):
-        """cols: [(name, decltype)] → (输入列, 输出列) 或 None"""
+        """cols: [(name, decltype)] → (输入列, 输出列) 或 None
+
+        精确列名优先；同时排除 cache/cached 列——`cache_read_input_tokens`
+        也包含子串 `input_tokens`，先遇到它会把缓存读当成输入重复统计。
+        """
         inp = out = None
+        cache_like = lambda name: "cache" in (name or "").lower() or "cached" in (name or "").lower()
         for name, decl in cols:
             low = (name or "").lower()
             numeric = any(t in (decl or "").lower() for t in _NUMERIC) or not decl
-            if not numeric:
+            if not numeric or cache_like(name):
                 continue
             if inp is None and any(low == k or low.endswith("_" + k) or k in low
                                    for k in _TOKEN_IN):

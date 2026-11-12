@@ -10,11 +10,18 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from tokenlens.adapters import CodexAdapter  # noqa: E402
+
+try:
+    import zstandard as zstd
+except Exception:  # pragma: no cover - optional dependency
+    zstd = None
 
 
 SESSION_META = {
@@ -163,6 +170,65 @@ class CodexLegacyTokenCountTests(unittest.TestCase):
         ])
         self.assertEqual(records[0].input, 50)
         self.assertEqual(records[0].cache_read, 150)
+
+
+class CodexCompressedRolloutTests(unittest.TestCase):
+    """Current Codex releases compress rollouts to .jsonl.zst.
+
+    Missing them silently dropped the whole history from a scan, so both the
+    live sessions tree and archived_sessions/ must be discovered and parsed.
+    """
+
+    @staticmethod
+    def _write_zst(path, lines):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        payload = ("\n".join(lines) + "\n").encode("utf-8")
+        with open(path, "wb") as fh:
+            with zstd.ZstdCompressor().stream_writer(fh) as writer:
+                writer.write(payload)
+
+    @unittest.skipUnless(zstd is not None, "zstandard not installed")
+    def test_parse_decompresses_jsonl_zst(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(
+                root, "rollout-2026-01-02T03-04-05-abcdef01-2345-6789-abcd-ef0123456789.jsonl.zst")
+            self._write_zst(path, [
+                json.dumps(SESSION_META),
+                mirror(last=usage(100, 40, 20), total=usage(100, 40, 20)),
+            ])
+            records = list(CodexAdapter(cfg={}).parse(path))
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].project, "/home/al/proj")
+        self.assertEqual(records[0].session, "thread-owner-1")
+        self.assertEqual((records[0].input, records[0].output), (60, 20))
+
+    @unittest.skipUnless(zstd is not None, "zstandard not installed")
+    def test_session_id_falls_back_to_compressed_filename(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(
+                root, "rollout-2026-01-02T03-04-05-abcdef01-2345-6789-abcd-ef0123456789.jsonl.zst")
+            self._write_zst(path, [mirror(last=usage(10, 0, 5), total=usage(10, 0, 5))])
+            records = list(CodexAdapter(cfg={}).parse(path))
+        self.assertEqual(len(records), 1)
+        # .zst must not leak into the derived session identity.
+        self.assertEqual(records[0].session, "abcdef01-2345-6789-abcd-ef0123456789")
+
+    @unittest.skipUnless(zstd is not None, "zstandard not installed")
+    def test_enumerate_discovers_compressed_sessions_and_archives(self):
+        with tempfile.TemporaryDirectory() as root:
+            live = os.path.join(root, "sessions", "2026", "01", "02",
+                                "rollout-2026-01-02T03-04-05-abcdef01-2345-6789-abcd-ef0123456789.jsonl.zst")
+            archived = os.path.join(root, "archived_sessions",
+                                    "rollout-2026-01-02T04-05-06-abcdef01-2345-6789-abcd-ef0123456789.jsonl.zst")
+            plain = os.path.join(root, "sessions", "2026", "01", "03",
+                                 "rollout-2026-01-03T03-04-05-abcdef01-2345-6789-abcd-ef0123456789.jsonl")
+            for path in (live, archived, plain):
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                open(path, "wb").close()
+            with mock.patch.dict(os.environ, {"CODEX_HOME": root}):
+                found = CodexAdapter(cfg={}).enumerate()
+        self.assertEqual({os.path.normcase(p) for p in found},
+                         {os.path.normcase(p) for p in (live, archived, plain)})
 
 
 if __name__ == "__main__":

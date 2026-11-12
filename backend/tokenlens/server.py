@@ -66,8 +66,14 @@ def request_filters(q, default_range="all"):
     if q.get("project") == "":
         out["project"] = "(未标注)"
     out["range"] = q.get("range") or default_range
-    if any(not isinstance(value, str) or len(value) > 4096 for value in out.values()):
-        raise RequestError("invalid query filter")
+    # project_paths 由 Aggregator 校验（最多 100 条 × 1024 字符），JSON 编码
+    # 后远超普通查询值的 4096 上限；按聚合层的容量单独放宽。
+    for key, value in out.items():
+        if not isinstance(value, str):
+            raise RequestError("invalid query filter")
+        limit = 110_000 if key == "project_paths" else 4096
+        if len(value) > limit:
+            raise RequestError("invalid query filter")
     if out.get("cost_basis", "total_cost") not in ("total_cost", "historical_cost", "repriced_cost"):
         raise RequestError("invalid cost basis")
     return out
@@ -92,6 +98,14 @@ def report_aggregator(store, cfg, filters):
         start = max(start or dates['from'], dates['from'])
     if dates.get('to'):
         end = min(end, dates['to'])
+    if not start and dates.get('to'):
+        # range=all 只收窄了上界时，用实际最早数据日作为起点，否则报告标题
+        # 仍写「全部时间」，与只到 to 的数据不一致。
+        scope_all = {key: value for key, value in filters.items()
+                     if key not in ('from', 'to', 'range')}
+        probe = Aggregator(store, cfg).filtered(scope_all)
+        where, args = probe._where('all')
+        start = store.query_one('SELECT MIN(day) first_day FROM records ' + where, args).get('first_day')
     if not start or start > end:
         return query_aggregator(store, cfg, filters), rng
     try:
@@ -102,6 +116,9 @@ def report_aggregator(store, cfg, filters):
     prior = dt.date.fromordinal(max(1, first.toordinal()-span))
     scope = {key:value for key,value in filters.items() if key not in ('from','to')}
     agg = Aggregator(store, cfg).filtered(scope)
+    # 预算始终按自然周期统计，必须在创建 TEMP VIEW 之前用未投影的库算好：
+    # 下面的视图只保留「上一周期 + 当前周期」，会让预算漏掉窗口外的记录。
+    agg._budget_override = Aggregator(store, cfg).budget('month', cfg)
     project_cost_basis(store, cfg, filters.get('cost_basis','total_cost'),
                        *agg._where('%s~%s' % (prior,end)))
     if dates.get('from') or dates.get('to'):
@@ -243,15 +260,21 @@ class App:
                 return
             values = {}
             if os.path.exists(self.custom_prices_path):
-                with open(self.custom_prices_path, "r", encoding="utf-8") as source:
-                    loaded = json.load(source)
-                if not isinstance(loaded, dict):
-                    raise ValueError("Legacy custom prices must be a JSON object")
-                for model, prices in loaded.items():
-                    key = P._norm(model)
-                    if not key or len(key) > 200:
-                        raise ValueError("Invalid legacy model name")
-                    values[key] = P.validate_prices(prices)
+                try:
+                    with open(self.custom_prices_path, "r", encoding="utf-8") as source:
+                        loaded = json.load(source)
+                    if not isinstance(loaded, dict):
+                        raise ValueError("Legacy custom prices must be a JSON object")
+                    for model, prices in loaded.items():
+                        key = P._norm(model)
+                        if not key or len(key) > 200:
+                            raise ValueError("Invalid legacy model name")
+                        values[key] = P.validate_prices(prices)
+                except (OSError, ValueError, TypeError) as exc:
+                    # 损坏的旧版价格文件不能阻塞服务启动；忽略内容并照常写入
+                    # 迁移标记，避免每次启动都重复失败。
+                    _LOG.warning("Ignoring legacy price file %s: %s", self.custom_prices_path, exc)
+                    values = {}
             with self.store._transaction():
                 for model, prices in values.items():
                     if conn.execute("SELECT 1 FROM price_versions WHERE model=?", (model,)).fetchone():
@@ -292,6 +315,25 @@ class App:
 
     def remove_custom_price(self, model):
         return self._change_custom_price(model, remove=True)
+
+    def reset_index(self):
+        """Clear the index only after a running scan has stopped.
+
+        A scan worker that keeps publishing after the delete would make old
+        records reappear, so cancel and wait first; if it cannot stop, refuse
+        the reset instead of racing it.
+        """
+        state = self.scanner.state
+        if state.running:
+            self.scanner.cancel()
+            if not self.scanner.wait(timeout=10):
+                raise RequestError("扫描仍在停止中，请稍后重试", 409)
+        # Scanner.start takes the same lock, so no new scan can slip in
+        # between the wait above and the reset.
+        with state.lock:
+            if state.running:
+                raise RequestError("扫描仍在停止中，请稍后重试", 409)
+            self.store.reset()
 
     def list_custom_prices(self):
         return [{"model": key, "price": dict(zip(("input", "output", "cache_read", "cache_write"), row["prices"]))}
@@ -573,7 +615,9 @@ def make_handler(app: App):
 
         def json_out(self, obj, code=200):
             obj = sanitize_public(obj, getattr(self, "_response_secrets", ()))
-            self._send(code, json.dumps(obj, ensure_ascii=False, default=str).encode("utf-8"),
+            # JSON 可以携带孤立 UTF-16 代理项，严格 UTF-8 编码会抛异常并
+            # 直接断连；替换编码保证错误响应总能送达客户端。
+            self._send(code, json.dumps(obj, ensure_ascii=False, default=str).encode("utf-8", "replace"),
                        "application/json; charset=utf-8")
 
         def read_json(self):
@@ -906,7 +950,8 @@ def make_handler(app: App):
             if path == "/api/ledger":
                 try:
                     limit=max(1,min(500,int(q.get('limit',20))));offset=int(q.get('offset',0))
-                    if offset<0:raise ValueError()
+                    # SQLite 绑定超过 2^63-1 的 OFFSET 会抛 OverflowError。
+                    if offset<0 or offset>2**63-1:raise ValueError()
                 except (TypeError,ValueError):
                     raise RequestError('invalid ledger page')
                 with export_snapshot(app.store) as snapshot:
@@ -1045,7 +1090,7 @@ def make_handler(app: App):
             safe_range = re.sub(r"[^a-zA-Z0-9_-]", "_", rng)[:64] or "all"
             if fmt in ("md", "markdown"):
                 lang = q.get("lang") or app.cfg.get("language") or "zh-CN"
-                md = report.render(agg, report_range, lang, cfg=app.cfg)
+                md = report.render(agg, report_range, lang, tool=filters.get("tool"), cfg=app.cfg)
                 basis = filters.get("cost_basis", "total_cost")
                 if lang == "en-US":
                     label = {"total_cost": "Saved cost", "historical_cost": "Prices at call date",
@@ -1330,7 +1375,9 @@ def make_handler(app: App):
                 b = body or {}
                 try:
                     val = app.set_custom_price(b.get("model", ""), b.get("price"))
-                except (ValueError, TypeError) as exc:
+                except (ValueError, TypeError, OverflowError) as exc:
+                    # 超大 JSON 整数在 float() 时抛 OverflowError；这是输入
+                    # 越界而不是服务故障，按 400 返回。
                     return self.json_out({"ok": False, "error": str(exc)}, 400)
                 return self.json_out({"ok": True, "model": str(b.get("model", "")).strip().lower(),
                                       "price": {"input": val[0], "output": val[1],
@@ -1440,7 +1487,7 @@ def make_handler(app: App):
                 res = app.prompt.delete_profile(b.get("profile_id", "")) if b.get("profile_id") else app.prompt.clear()
                 return self.json_out(res, 200 if res.get("ok") else 400)
             if path == "/api/reset":
-                app.store.reset()
+                app.reset_index()
                 return self.json_out({"ok": True})
             if path == "/api/pick-folder":
                 return self.json_out({"ok": False, "error": "请在输入框中直接粘贴目录路径"})

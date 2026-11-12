@@ -10,6 +10,18 @@ import sys
 import threading
 
 
+def secret_matches(provided, token):
+    """Constant-time header check; non-ASCII or malformed values are a rejection."""
+    if len(provided) != 1:
+        return False
+    try:
+        # HTTP headers arrive Latin-1 decoded. Compare bytes: comparing str
+        # values with compare_digest raises TypeError on non-ASCII input.
+        return secrets.compare_digest(provided[0].encode('utf-8'), token.encode('utf-8'))
+    except (UnicodeError, TypeError, AttributeError):
+        return False
+
+
 def main():
     line = sys.stdin.buffer.readline(8193)
     if len(line) > 8192 or not line.endswith(b'\n'):
@@ -37,7 +49,7 @@ def main():
 
         def check_origin(self):
             provided = self.headers.get_all('X-Kjuan-Secret', [])
-            if (len(provided) != 1 or not secrets.compare_digest(provided[0], token)
+            if (not secret_matches(provided, token)
                     or self.headers.get('Origin') or self.headers.get('Sec-Fetch-Site')
                     or not self.path.startswith('/api/')):
                 raise RequestError('request rejected', 403)

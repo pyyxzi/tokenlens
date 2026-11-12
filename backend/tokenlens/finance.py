@@ -55,7 +55,9 @@ def project_cost_basis(store, cfg, basis, where, args):
         if source == 'usage-unavailable':
             return saved or 0, 'unknown', None, None
         at = today if basis == 'repriced_cost' else day
-        match = next((row for row in versions.get((model or '').strip().lower(), []) if row['effective_from'] <= at), None)
+        match = next((row for row in versions.get((model or '').strip().lower(), [])
+                      if row['effective_from'] <= at
+                      and (not row.get('effective_to') or at <= row['effective_to'])), None)
         if not match:
             return saved or 0, kind, None, None
         provenance = 'analysis-current-prices' if basis == 'repriced_cost' else 'analysis-call-date-prices'
@@ -141,6 +143,11 @@ class Finance:
             if "rules" not in columns:
                 conn.execute("ALTER TABLE price_versions ADD COLUMN rules TEXT NOT NULL DEFAULT '[]'")
                 conn.commit()
+            # Source-declared end date (promotions, retired rates). Nullable for
+            # backward compatibility: existing rows keep applying indefinitely.
+            if "effective_to" not in columns:
+                conn.execute("ALTER TABLE price_versions ADD COLUMN effective_to TEXT")
+                conn.commit()
 
     def _write(self, sql, params=(), audit=None):
         with self.store.locked() as conn:
@@ -163,7 +170,19 @@ class Finance:
         for row in values:
             row["prices"] = json.loads(row["prices"])
             row["rules"] = json.loads(row.get("rules") or "[]")
+            row["effective_to"] = row.get("effective_to") or None
         return values
+
+    def effective_prices(self, at=None):
+        """Active price version per model at ``at`` (inclusive end date)."""
+        at = day(at) if at else str(dt.date.today())
+        result = {}
+        for row in self.prices():
+            if row["model"] in result:
+                continue
+            if row["effective_from"] <= at and (not row.get("effective_to") or at <= row["effective_to"]):
+                result[row["model"]] = row
+        return result
 
     def save_price(self, body):
         return self._save_price(body)
@@ -179,6 +198,9 @@ class Finance:
         if not model or len(model) > 200:
             raise ValueError("请填写模型名称（不超过200字）")
         effective = day(body.get("effective_from"))
+        effective_to = day(body["effective_to"]) if body.get("effective_to") else None
+        if effective_to and effective_to < effective:
+            raise ValueError("价格失效日期不能早于生效日期")
         raw = body.get("prices")
         if not isinstance(raw, list) or len(raw) != 4:
             raise ValueError("请填写输入、输出、缓存读、缓存写四项单价")
@@ -192,9 +214,11 @@ class Finance:
         source = str(body.get("source") or "用户录入").strip()[:500]
         existing = self.store.query_one("SELECT * FROM price_versions WHERE model=? AND effective_from=? ORDER BY rowid DESC LIMIT 1", (model, effective))
         row = {"id": uuid.uuid4().hex, "model": model,
-               "effective_from": effective, "prices": prices, "rules": rules, "source": source, "created_at": int(time.time())}
-        self._write("INSERT INTO price_versions(id,model,effective_from,prices,source,created_at,rules) VALUES(?,?,?,?,?,?,?)",
-                    (row["id"], model, effective, json.dumps(prices), source, row["created_at"], json.dumps(rules)),
+               "effective_from": effective, "effective_to": effective_to,
+               "prices": prices, "rules": rules, "source": source, "created_at": int(time.time())}
+        self._write("INSERT INTO price_versions(id,model,effective_from,effective_to,prices,source,created_at,rules) VALUES(?,?,?,?,?,?,?,?)",
+                    (row["id"], model, effective, effective_to, json.dumps(prices), source,
+                     row["created_at"], json.dumps(rules)),
                     ("price_save", existing, row))
         return {"ok": True, "price": row}
 
@@ -405,7 +429,8 @@ class Finance:
                 if row["cost_source"] == "usage-unavailable":
                     total[unknown_key] += row["records"]
                     return cost
-                match = next((p for p in candidates if p["effective_from"] <= at), None)
+                match = next((p for p in candidates if p["effective_from"] <= at
+                              and (not p.get("effective_to") or at <= p["effective_to"])), None)
                 if kind in ("actual", "free"):
                     return cost
                 if not match:

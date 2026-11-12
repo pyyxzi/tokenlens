@@ -305,6 +305,20 @@ def signals(snapshot):
     return sorted(output, key=lambda item:(-item['priority'], item['id']))
 
 
+def _without_source_paths(value):
+    """Copy a payload for an external model without local filesystem paths.
+
+    ``project_paths`` carries absolute local paths used only for local
+    drill-down. The model gets aggregate display names and IDs instead.
+    """
+    if isinstance(value, dict):
+        return {key: _without_source_paths(item) for key, item in value.items()
+                if key != 'project_paths'}
+    if isinstance(value, (list, tuple)):
+        return [_without_source_paths(item) for item in value]
+    return value
+
+
 def model_context(snapshot):
     """Do not send full charts, source paths or raw log bodies to a model."""
     selected = snapshot['signals'][:8]
@@ -323,10 +337,13 @@ def model_context(snapshot):
     sessions = snapshot.get('sessions', [])[:8]
     ids.update(item['id'] for item in sessions)
     ids.update(item['id'] for item in snapshot['evidence'] if item.get('kind') == 'day')
-    return {key:snapshot[key] for key in ('schema_version','range','bounds','current','previous','comparison','filters','limitations')} | {
+    context = {key:snapshot[key] for key in ('schema_version','range','bounds','current','previous','comparison','filters','limitations')} | {
         'cost_basis':snapshot.get('cost_basis','total_cost'), 'currency':'USD',
         'signals':selected, 'groups':groups,
         'evidence':[item for item in snapshot['evidence'] if item['id'] in ids][:64],
         'daily_peaks':selected_days, 'sessions':sessions,
         'cost_breakdown':snapshot['cost_breakdown'],
         'previous_cost_breakdown':snapshot['previous_cost_breakdown']}
+    # Filters and every evidence item's filter/previous_filter can contain
+    # project_paths; strip them recursively before the payload leaves the app.
+    return _without_source_paths(context)

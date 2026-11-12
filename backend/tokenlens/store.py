@@ -413,6 +413,10 @@ class Store:
         """
         if not fts_supported(self._conn):
             self.fts = False
+            # A marker left behind by a run without FTS5 would make the next
+            # capable build trust an index that never received those rows.
+            self._conn.execute("DELETE FROM kv WHERE k=?", (FTS_MARK,))
+            self._conn.commit()
             return
         self._conn.execute(FTS_SCHEMA)
         row = self._conn.execute(
@@ -756,8 +760,12 @@ class Store:
                             old = candidates[0]
             if old is not None:
                 self._conn.execute("DELETE FROM tokenlens_cost_snapshot WHERE id=?", (old["id"],))
-                for name in _COST_COLUMNS:
-                    values[name] = old[name]
+                # Saved costs only describe an estimate/unknown row. A reparse
+                # may now report an authoritative actual charge or classify the
+                # event as local/free; that new classification must win.
+                if values["cost_kind"] in ("estimated", "unknown"):
+                    for name in _COST_COLUMNS:
+                        values[name] = old[name]
             elif values["cost_kind"] in ("estimated", "unknown") and values["cost_source"] != "usage-unavailable":
                 model = str(values["model"] or "").strip().lower()
                 version, exists = self._price_lookup(model, values["day"], cache)
@@ -1048,7 +1056,7 @@ class Store:
                 "UPDATE records SET cost = "
                 "(input*? + (output+reasoning)*? + cache_read*? + cache_write*?) / 1000000.0,"
                 "cost_kind=?,cost_source=?,price_version=? "
-                "WHERE lower(trim(model))=? AND cost_kind IN ('estimated','unknown')",
+                "WHERE tokenlens_model_key(model)=? AND cost_kind IN ('estimated','unknown')",
                 (i, o, cr, cw, kind, source if kind == "estimated" else "unpriced",
                  version if kind == "estimated" else "", str(model or "").strip().lower()))
             # A finite unit rate can overflow when multiplied by indexed
@@ -1083,6 +1091,18 @@ class Store:
                 cur.execute("DELETE FROM files WHERE path=?", (p,))
                 cur.execute("DELETE FROM kv WHERE k=?", (FILE_CURSOR_PREFIX + p,))
             return len(dead)
+
+    def kv_get(self, key: str, default: str = "") -> str:
+        with self._lock:
+            row = self._conn.execute("SELECT v FROM kv WHERE k=?", (key,)).fetchone()
+            return row["v"] if row else default
+
+    def kv_set(self, key: str, value: str):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                (key, value))
+            self._commit()
 
     def drop_missing_files_for_tool(self, alive_paths: set, tool: str):
         """单个来源重扫时，只清理该来源已经消失的文件。

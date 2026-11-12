@@ -16,3 +16,4 @@ __pycache__/
 src-tauri/gen/
 src-tauri/binaries/
 tools/.preview-workspace-*/
+_tmp_test/

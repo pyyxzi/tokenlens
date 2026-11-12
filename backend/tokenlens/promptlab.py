@@ -67,6 +67,9 @@ CONNECT_TIMEOUT = 15.0        # DNS/TCP/TLS 建连上限，与模型等待/读�
 AI_BODY_LIMIT = 16 * 1024 * 1024
 AVAILABILITY_TTL = 10 * 60     # 「检测通过」结果的复用时间；失败结果永不缓存
 AVAILABILITY_MAX_TOKENS = 8    # 探针只需要确认服务能返回一小段内容
+# 强制推理模型会先把输出预算花在隐藏思维链上；8 个 token 会在正文出现前
+# 就以 finish_reason=length 结束。给这类模型留出足够的思考+正文预算。
+AVAILABILITY_REASONING_MAX_TOKENS = 512
 AVAILABILITY_REASONING_PROOF = 24  # 只看到思维链时，累计这么多字符即可判定可用
 OPTIMIZE_TIMEOUT = 180.0       # 优化任务允许更久（推理型模型首包可能很慢）
 IQ_TIMEOUT = 900.0             # 智商检测：推理模型单题可能要几分钟（实测 217s）
@@ -869,8 +872,17 @@ def models_probe(base_url, key, proto="openai", timeout=MODELS_TIMEOUT,
                and not contains_secret(item, key)]
         out["count"] = len(ids)
         out["models"] = ids[:200]
+        out["catalog"] = bool(ids)
     except Exception:
         out["count"] = 0
+        out["catalog"] = False
+    if not out.get("catalog"):
+        # A 2xx response only proves the URL answered. HTML error pages,
+        # captive portals and empty lists do not prove the model can generate,
+        # so leave this unverified and let the caller run the streaming probe.
+        out["ok"] = False
+        out["error"] = "模型目录为空或格式无法解析"
+        out["error_kind"] = "not_catalog"
     return out
 
 
@@ -918,6 +930,29 @@ def _responses_object(obj):
 
 def _supports_responses_reasoning(model):
     return reasoning_capabilities("responses", model)["control"] == "reasoning.effort"
+
+
+# Model families whose hidden reasoning consumes the output budget before any
+# public text. The same family list is used for probe sizing and for choosing
+# OpenAI's reasoning-only request fields.
+_REASONING_FAMILY = re.compile(
+    r"(?:^|[/ :])(?:o[134](?:[-.]|$)|gpt-5(?:[.-]|$)|gemini-2\.5-pro(?:[-.]|$)|gemini-[3-9](?:[.-]|$))")
+
+
+def _is_reasoning_model(model):
+    """True for families that always spend output tokens on hidden reasoning."""
+    return bool(_REASONING_FAMILY.search(str(model or "").strip().lower()))
+
+
+def _openai_reasoning_model(model):
+    """OpenAI models that require max_completion_tokens and reject temperature."""
+    name = str(model or "").strip().lower()
+    return bool(re.search(r"(?:^|[/ :])(?:o[134](?:[-.]|$)|gpt-5(?:[.-]|$))", name))
+
+
+def _probe_token_cap(model):
+    """Availability probe budget: None omits the cap for reasoning families."""
+    return AVAILABILITY_REASONING_MAX_TOKENS if _is_reasoning_model(model) else AVAILABILITY_MAX_TOKENS
 
 
 def _responses_terminal(obj):
@@ -1796,6 +1831,7 @@ class PromptLab:
         self._verified = {}
         self._availability_cache = {}
         self._opt_cache = {}
+        self._opt_lock = threading.Lock()
         from .config import data_dir
         self.path = os.path.join(data_dir(), self.CONFIG_NAME)
         self.data = {
@@ -2111,6 +2147,14 @@ class PromptLab:
                         % (mp.get("url"), mp.get("count"), model))
                 else:
                     return _mk(result, "ok", level="ok", ok=True)
+            elif mp.get("status") and 200 <= mp["status"] < 300:
+                # 2xx without a parsed model catalog is not evidence that the
+                # model works (HTML landing pages, empty lists, captive
+                # portals). Fall through to the real streaming probe.
+                result["probe_mode"] = "stream-after-models"
+                result["model_note"] = (
+                    "GET %s 未返回可解析的模型目录，已改用真实调用再确认一次。"
+                    % mp.get("url"))
             elif mp.get("supported"):
                 # 端点存在但拒绝了请求（401/403/5xx）：这是确定结论，不用再探。
                 code = {401: "auth", 403: "forbidden"}.get(mp.get("status")) \
@@ -2207,6 +2251,14 @@ class PromptLab:
             return _mk(result, "bad_request", detail="%s\n服务端返回：%s"
                        % (_hint("bad_request")["detail"], _err_text(r.body)))
 
+        if r.error_kind == "truncated" and (r.reply or r.reasoning):
+            # A reasoning model can hit the output cap after producing hidden
+            # reasoning (or a partial answer). The connection and credentials
+            # are proven, so a truncated probe is a successful check.
+            result["reply"] = (r.reply or "(推理输出)")[:200]
+            result["usage"] = r.usage
+            result["model_echo"] = r.model_echo or model
+            return _mk(result, "ok", level="ok", ok=True)
         if r.error_kind:
             code = r.error_kind if r.error_kind in ERROR_HINTS else "bad_request"
             return _mk(result, code, detail=r.error or _hint(code)["detail"])
@@ -2245,30 +2297,40 @@ class PromptLab:
         box, prog = {}, {}
         threads = {}
         cancelled = {}
+        # Probe threads publish progress/results here while the main thread
+        # iterates the same mappings. A plain dict grows during iteration and
+        # raises "dictionary changed size during iteration", so every access
+        # goes through this lock.
+        state_lock = threading.Lock()
         finished = threading.Event()
         started = time.monotonic()
         deadline = started + (AVAILABILITY_TIMEOUT if timeout is None else max(0, float(timeout)))
 
         def run(idx):
             p = {}
-            prog[idx] = p
+            with state_lock:
+                prog[idx] = p
             try:
                 with call_role("hedge" if idx else "primary"):
                     remaining = deadline-time.monotonic()
                     if remaining <= 0:
                         response = Resp()
                         response.error_kind, response.error = "timeout", "Overall availability deadline exceeded"
-                        box[idx] = response
+                        with state_lock:
+                            box[idx] = response
                         return
-                    box[idx] = http_stream_probe(
+                    response = http_stream_probe(
                         endpoint, headers=headers, payload=body,
                         timeout=remaining, ignore_proxy=ignore_proxy,
                         insecure=insecure, progress=p, cancel=lambda:cancelled[idx].is_set() or bool(cancel and cancel()),
                         first_output_only=first_output_only)
+                    with state_lock:
+                        box[idx] = response
             except Exception as exc:
                 response = Resp()
                 response.error_kind, response.error = "unknown", type(exc).__name__
-                box[idx] = response
+                with state_lock:
+                    box[idx] = response
             finally:
                 p["finished"] = True
                 finished.set()
@@ -2284,17 +2346,19 @@ class PromptLab:
 
         def content_idx():
             """已经真正拿到模型输出的那次探针编号（正文或思维链）。"""
-            for idx in sorted(prog):
-                if prog[idx].get("content"):
-                    return idx
+            with state_lock:
+                for idx in sorted(prog):
+                    if prog[idx].get("content"):
+                        return idx
             return None
 
         def http_conclusion():
             """已经拿到确定 HTTP 错误（鉴权/限流等）的探针结果，无需再等。"""
-            for idx in sorted(box):
-                res = box[idx]
-                if res is not None and res.status is not None and res.status != 200:
-                    return res
+            with state_lock:
+                for idx in sorted(box):
+                    res = box[idx]
+                    if res is not None and res.status is not None and res.status != 200:
+                        return res
             return None
 
         next_hedge = time.monotonic() + AVAILABILITY_HEDGE_AFTER
@@ -2313,15 +2377,20 @@ class PromptLab:
                 for idx, flag in cancelled.items():
                     if idx != winner:
                         flag.set()
-                if winner in box:
-                    best = box[winner]
+                with state_lock:
+                    ready = box.get(winner)
+                if ready is not None:
+                    best = ready
                     break
             err = http_conclusion() if winner is None else None
             if err is not None:
                 best = err
                 break
-            if box and len(box) == len(threads):
-                best = box[min(box)]
+            with state_lock:
+                settled = len(box) == len(threads) and len(box) > 0
+                first = box[min(box)] if settled else None
+            if settled:
+                best = first
                 break
             # 补发到上限后就不再增加；但上游偶尔会「所有请求一起排队十几秒」，
             # 这时再等下去也拿不到东西，不如把上限压到 AVAILABILITY_TIMEOUT，
@@ -2336,16 +2405,18 @@ class PromptLab:
 
         if best is None:
             # 优先取「真的拿到内容」的那次；否则取任意已落地的结果。
-            for idx in sorted(box):
-                res = box[idx]
-                if res is not None and (res.reply or res.reasoning):
-                    best = res
-                    break
+            with state_lock:
+                for idx in sorted(box):
+                    res = box[idx]
+                    if res is not None and (res.reply or res.reasoning):
+                        best = res
+                        break
         if best is None:
-            for idx in sorted(box):
-                if box[idx] is not None:
-                    best = box[idx]
-                    break
+            with state_lock:
+                for idx in sorted(box):
+                    if box[idx] is not None:
+                        best = box[idx]
+                        break
         if best is None:
             best = Resp()
             best.error_kind, best.error = "timeout", "连接或读取超时"
@@ -2376,11 +2447,16 @@ class PromptLab:
         （开启思考时正文要等 1.9~3.7s，且偶发 11.7s 长尾）。
         """
         q = "只回复：1"
+        cap = _probe_token_cap(model)
         if proto == "anthropic":
-            return {"model": model, "max_tokens": AVAILABILITY_MAX_TOKENS,
+            return {"model": model, "max_tokens": cap,
                     "messages": [{"role": "user", "content": q}], "stream": True}
         if proto == "gemini":
-            cfg = {"maxOutputTokens": AVAILABILITY_MAX_TOKENS, "temperature": 0}
+            cfg = {"temperature": 0}
+            # Reasoning families consume the output budget while thinking.
+            # Omitting the cap lets the probe reach a visible answer.
+            if not _is_reasoning_model(model):
+                cfg["maxOutputTokens"] = cap
             thinking = economical_reasoning(proto, model)
             if thinking:
                 cfg["thinkingConfig"] = thinking
@@ -2391,8 +2467,12 @@ class PromptLab:
             # cap can end the request before the model can answer this probe.
             payload.update(economical_reasoning(proto, model))
             return payload
+        if _openai_reasoning_model(model):
+            # o-series/gpt-5 reject max_tokens and custom temperature.
+            return {"model": model, "messages": [{"role": "user", "content": q}],
+                    "max_completion_tokens": cap, "stream": True}
         return {"model": model, "messages": [{"role": "user", "content": q}],
-                "max_tokens": AVAILABILITY_MAX_TOKENS, "temperature": 0, "stream": True,
+                "max_tokens": cap, "temperature": 0, "stream": True,
                 "enable_thinking": False}
 
     @staticmethod
@@ -2406,7 +2486,9 @@ class PromptLab:
         if proto == "openai":
             p2 = {k: v for k, v in payload.items()
                   if k not in ("temperature", "max_tokens", "stream", "enable_thinking")}
-            p2["max_completion_tokens"] = payload.get("max_tokens", AVAILABILITY_MAX_TOKENS)
+            p2["max_completion_tokens"] = (payload.get("max_tokens")
+                                           or payload.get("max_completion_tokens")
+                                           or AVAILABILITY_MAX_TOKENS)
             p2["stream"] = True
             out.append(("兼容 max_completion_tokens", p2))
             # 不认 enable_thinking 的普通网关：去掉该字段再试一次。
@@ -2467,7 +2549,11 @@ class PromptLab:
             return {"ok": False, "error": "API Key 不能为空"}
         model = (model or "").strip()
         base_url = normalize_base_url(base_url)
-        protocol = "auto"  # 对用户只暴露三项，协议与请求参数统一自动处理。
+        # 检测（/api/prompt/check）登记指纹时用的是**解析后**的协议，
+        # 这里必须用同一解析结果，否则 "auto" 与 "openai" 的哈希永不相等，
+        # 保存会一直报「请先通过可用性检测」。协议只对内部生效，
+        # 对用户仍然只有模型 + 地址 + Key 三项。
+        protocol = self.request_protocol(model, base_url, protocol, profile_id)
         temperature = DEFAULT_TEMPERATURE
         max_tokens = DEFAULT_MAX_TOKENS
         ignore_proxy = DEFAULT_IGNORE_PROXY
@@ -3163,21 +3249,28 @@ class PromptLab:
                 payload["reasoning"]["summary"] = "auto"
         else:
             headers = {"Authorization": "Bearer " + key}
-            payload = {"model": model, "temperature": temp, "max_tokens": mt,
-                       "messages": [{"role": "system", "content": system},
-                                    {"role": "user", "content": user_content}]}
-            # 提示词重写不需要模型先写一大段思维链。实测同一个 19 字改写请求，
-            # 开启思考 12.0s / 关闭思考 0.8s，结果内容一致。
-            #
-            # 这个开关没有统一的跨厂商写法，所以按"从最可能被认到最不可能"的
-            # 顺序探测；_optimize_thinking_off() 负责在升级路径上标记用了哪种。
-            low_model = model.lower()
-            if any(name in low_model for name in ("glm-4.5", "glm-4.6", "glm-4.7",
-                                                  "glm-5", "qwen3", "minimax-m")):
-                # 这些模型族普遍认 enable_thinking（硅基流动官方文档即为此字段）。
-                payload["enable_thinking"] = False
-            elif "siliconflow" in base_url.lower():
-                payload["enable_thinking"] = False
+            messages = [{"role": "system", "content": system},
+                        {"role": "user", "content": user_content}]
+            if _openai_reasoning_model(model):
+                # OpenAI reasoning models require max_completion_tokens and
+                # reject a non-default temperature (mirror assistant_service).
+                payload = {"model": model, "max_completion_tokens": mt,
+                           "messages": messages}
+            else:
+                payload = {"model": model, "temperature": temp, "max_tokens": mt,
+                           "messages": messages}
+                # 提示词重写不需要模型先写一大段思维链。实测同一个 19 字改写请求，
+                # 开启思考 12.0s / 关闭思考 0.8s，结果内容一致。
+                #
+                # 这个开关没有统一的跨厂商写法，所以按"从最可能被认到最不可能"的
+                # 顺序探测；_optimize_thinking_off() 负责在升级路径上标记用了哪种。
+                low_model = model.lower()
+                if any(name in low_model for name in ("glm-4.5", "glm-4.6", "glm-4.7",
+                                                      "glm-5", "qwen3", "minimax-m")):
+                    # 这些模型族普遍认 enable_thinking（硅基流动官方文档即为此字段）。
+                    payload["enable_thinking"] = False
+                elif "siliconflow" in base_url.lower():
+                    payload["enable_thinking"] = False
         return endpoint, headers, payload, None
 
     def _optimize_prepare(self, prompt, task, extra, mode, model, base_url, api_key,
@@ -3211,6 +3304,23 @@ class PromptLab:
              "protocol": ctx.get("protocol", "auto"), "credential": hashlib.sha256(ctx["key"].encode()).hexdigest()},
             ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
+    def _opt_cache_get(self, cache_key):
+        with self._opt_lock:
+            item = self._opt_cache.get(cache_key)
+            return copy.deepcopy(item) if item else None
+
+    def _opt_cache_put(self, cache_key, result):
+        """Publish a finished optimization and evict atomically.
+
+        Two concurrent optimizations can both see an over-cap cache and race
+        on pop(next(iter(...))); the loser used to raise KeyError *after* the
+        paid generation had already succeeded, discarding its result.
+        """
+        with self._opt_lock:
+            self._opt_cache[cache_key] = (time.time(), copy.deepcopy(result))
+            while len(self._opt_cache) > 32:
+                self._opt_cache.pop(next(iter(self._opt_cache)), None)
+
     @operation("optimize")
     def optimize_stream(self, prompt, task="general", extra="", mode="polish", model=None,
                         base_url=None, api_key="", protocol=None, profile_id="",
@@ -3227,9 +3337,9 @@ class PromptLab:
             return err
         ctx["protocol"] = protocol or self.request_protocol(ctx["model"], ctx["base_url"], profile_id=profile_id)
         cache_key = self._opt_cache_key(ctx)
-        cached = self._opt_cache.get(cache_key)
+        cached = self._opt_cache_get(cache_key)
         if cached and time.time() - cached[0] < 15 * 60:
-            result = copy.deepcopy(cached[1])
+            result = cached[1]
             result["cached"] = True
             emit({"type": "result", **result})
             return result
@@ -3347,9 +3457,7 @@ class PromptLab:
             "basis": prompt_basis(ctx["mode"]),
             "parsed": {"optimized": optimized}, "raw": optimized,
         }
-        self._opt_cache[cache_key] = (time.time(), copy.deepcopy(result))
-        if len(self._opt_cache) > 32:
-            self._opt_cache.pop(next(iter(self._opt_cache)))
+        self._opt_cache_put(cache_key, result)
         emit({"type": "result", **result})
         return result
 
@@ -3367,9 +3475,9 @@ class PromptLab:
 
         ctx["protocol"] = protocol or self.request_protocol(ctx["model"], ctx["base_url"], profile_id=profile_id)
         cache_key = self._opt_cache_key(ctx)
-        cached = self._opt_cache.get(cache_key)
+        cached = self._opt_cache_get(cache_key)
         if cached and time.time() - cached[0] < 15 * 60:
-            result = copy.deepcopy(cached[1])
+            result = cached[1]
             result["cached"] = True
             return result
 
@@ -3426,9 +3534,7 @@ class PromptLab:
             "basis": prompt_basis(mode),
             "parsed": {"optimized": optimized}, "raw": optimized,
         }
-        self._opt_cache[cache_key] = (time.time(), copy.deepcopy(result))
-        if len(self._opt_cache) > 32:
-            self._opt_cache.pop(next(iter(self._opt_cache)))
+        self._opt_cache_put(cache_key, result)
         return result
 
 

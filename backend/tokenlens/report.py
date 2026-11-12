@@ -271,7 +271,11 @@ def _insights(agg, rng, lang, tool=None) -> str:
 
 def _budget(agg, rng, cfg, lang) -> str:
     try:
-        b = agg.budget(rng, cfg)
+        # 报告聚合器可能用 TEMP VIEW 裁剪了重定价范围；预算按自然周期统计，
+        # 必须优先使用创建视图之前算好的未投影结果。
+        b = getattr(agg, "_budget_override", None)
+        if b is None:
+            b = agg.budget(rng, cfg)
     except Exception:
         return ""
     if (b.get("metric") or "none") == "none" or not b.get("limit"):
