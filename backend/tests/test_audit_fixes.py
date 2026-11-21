@@ -278,7 +278,11 @@ class VolumeAvailabilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as work:
             self.assertTrue(_volume_available(os.path.join(work, "f.jsonl")))
 
+    @unittest.skipUnless(os.name == "nt", "drive-letter semantics are Windows-only")
     def test_missing_drive_is_unavailable(self):
+        # posixpath.splitdrive() finds no drive in "Q:\\...", so on POSIX the
+        # helper deliberately falls back to "assume available"; the drive-root
+        # probe can only be exercised where drive letters exist.
         missing = [letter for letter in "ZYXWV" if not os.path.exists(letter + ":\\")]
         if not missing:
             self.skipTest("no unused drive letter available")
